@@ -51,9 +51,10 @@ type PendingSceneChange =
 const AUTOSAVE_DELAY_MS = 500;
 
 function toCanvasScene(elements: readonly unknown[], appState: unknown, files: unknown): CanvasScene {
-  return JSON.parse(
+  const scene = JSON.parse(
     serializeAsJSON(elements as never, appState as never, files as never, "database"),
   ) as CanvasScene;
+  return { ...scene, files: scene.files ?? {} };
 }
 
 function canonicalizeAgentElements(scene: CanvasScene): { scene: CanvasScene; changed: boolean } {
@@ -83,7 +84,11 @@ function canonicalizeAgentElements(scene: CanvasScene): { scene: CanvasScene; ch
   );
 
   return {
-    scene: { ...scene, elements: [...canonical, ...(converted as never)] },
+    scene: toCanvasScene(
+      [...canonical, ...converted],
+      scene.appState,
+      scene.files ?? {},
+    ),
     changed: true,
   };
 }
@@ -142,6 +147,7 @@ export function CanvasWorkspaceView(props: {
 
   const excalidrawApiRef = useRef<ExcalidrawImperativeAPI | null>(null);
   const revisionRef = useRef<string | null>(null);
+  const persistedSceneJsonRef = useRef<string | null>(null);
   const pendingSceneRef = useRef<PendingSceneChange | null>(null);
   const saveTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const saveChainRef = useRef<Promise<void>>(Promise.resolve());
@@ -156,6 +162,7 @@ export function CanvasWorkspaceView(props: {
   const applySnapshot = useCallback(
     (snapshot: CanvasDrawingSnapshot) => {
       revisionRef.current = snapshot.revision;
+      persistedSceneJsonRef.current = JSON.stringify(snapshot.scene);
       pendingSceneRef.current = null;
       conflictRef.current = false;
       applyingRemoteSceneRef.current = true;
@@ -222,20 +229,26 @@ export function CanvasWorkspaceView(props: {
       const expectedRevision = revisionRef.current;
       if (!api || !pendingScene || !expectedRevision) return;
       pendingSceneRef.current = null;
-      setSaveState("saving");
       let scene: CanvasScene | null = null;
       try {
         scene =
           pendingScene.kind === "serialized"
             ? pendingScene.scene
             : toCanvasScene(pendingScene.elements, pendingScene.appState, pendingScene.files);
+        const sceneJson = JSON.stringify(scene);
+        if (sceneJson === persistedSceneJsonRef.current) {
+          if (!pendingSceneRef.current) setSaveState("saved");
+          return;
+        }
+        setSaveState("saving");
         const snapshot = await api.canvas.saveDrawing({
           threadId: props.threadId,
           scene,
           expectedRevision,
         });
         revisionRef.current = snapshot.revision;
-        setSaveState("saved");
+        persistedSceneJsonRef.current = JSON.stringify(snapshot.scene);
+        if (!pendingSceneRef.current) setSaveState("saved");
       } catch (error) {
         const message = error instanceof Error ? error.message : String(error);
         const conflicted = /revision|conflict/i.test(message);
@@ -253,9 +266,7 @@ export function CanvasWorkspaceView(props: {
         return;
       }
       pendingSceneRef.current = { kind: "excalidraw", elements, appState, files };
-      setSaveState("saving");
-      if (saveTimerRef.current) clearTimeout(saveTimerRef.current);
-      saveTimerRef.current = setTimeout(flushPendingSave, AUTOSAVE_DELAY_MS);
+      saveTimerRef.current ??= setTimeout(flushPendingSave, AUTOSAVE_DELAY_MS);
     },
     [agentEditing, flushPendingSave],
   );

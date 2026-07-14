@@ -6,9 +6,9 @@ export const CanvasScene = Schema.Struct({
   type: Schema.optional(Schema.Literal("excalidraw")),
   version: Schema.optional(Schema.Number),
   source: Schema.optional(Schema.String),
-  elements: Schema.Array(Schema.Record(Schema.String, Schema.Unknown)),
-  appState: Schema.Record(Schema.String, Schema.Unknown),
-  files: Schema.optional(Schema.Record(Schema.String, Schema.Unknown)),
+  elements: Schema.Array(Schema.Record(Schema.String, Schema.Json)),
+  appState: Schema.Record(Schema.String, Schema.Json),
+  files: Schema.optional(Schema.Record(Schema.String, Schema.Json)),
 });
 export type CanvasScene = typeof CanvasScene.Type;
 

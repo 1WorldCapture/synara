@@ -32,4 +32,25 @@ describe("excalidrawScene", () => {
       }),
     ).toThrow(InvalidCanvasSceneError);
   });
+
+  it("rejects elements without non-empty string ids and types", () => {
+    expect(() =>
+      serializeCanvasScene({
+        ...EMPTY_CANVAS_SCENE,
+        elements: [{ id: "box-1" }],
+      }),
+    ).toThrow(InvalidCanvasSceneError);
+    expect(() =>
+      serializeCanvasScene({
+        ...EMPTY_CANVAS_SCENE,
+        elements: [{ id: "", type: "rectangle" }],
+      }),
+    ).toThrow(InvalidCanvasSceneError);
+    expect(() =>
+      serializeCanvasScene({
+        ...EMPTY_CANVAS_SCENE,
+        elements: [{ id: "box-1", type: 1 }],
+      }),
+    ).toThrow(InvalidCanvasSceneError);
+  });
 });

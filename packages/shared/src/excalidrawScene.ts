@@ -17,6 +17,21 @@ export class InvalidCanvasSceneError extends Error {
   readonly name = "InvalidCanvasSceneError";
 }
 
+function assertElementIdentities(scene: CanvasSceneType): void {
+  for (const [index, element] of scene.elements.entries()) {
+    if (typeof element.id !== "string" || element.id.trim().length === 0) {
+      throw new InvalidCanvasSceneError(
+        `Canvas element at index ${index} must have a non-empty string id.`,
+      );
+    }
+    if (typeof element.type !== "string" || element.type.trim().length === 0) {
+      throw new InvalidCanvasSceneError(
+        `Canvas element at index ${index} must have a non-empty string type.`,
+      );
+    }
+  }
+}
+
 export function normalizeCanvasScene(value: unknown): CanvasSceneType {
   const candidate =
     value && typeof value === "object" && !Array.isArray(value)
@@ -43,6 +58,7 @@ export function normalizeCanvasScene(value: unknown): CanvasSceneType {
       `Canvas scene exceeds the ${MAX_CANVAS_SCENE_ELEMENTS} element limit.`,
     );
   }
+  assertElementIdentities(scene);
   return scene;
 }
 

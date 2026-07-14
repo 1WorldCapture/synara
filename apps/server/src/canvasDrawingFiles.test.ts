@@ -81,7 +81,7 @@ describe("canvasDrawingFiles", () => {
         saveCanvasDrawing({
           cwd,
           threadId: "drawing-concurrent",
-          scene: { ...EMPTY_CANVAS_SCENE, elements: [{ id }] },
+          scene: { ...EMPTY_CANVAS_SCENE, elements: [{ id, type: "rectangle" }] },
           expectedRevision: created.revision,
         }),
       ),
@@ -140,7 +140,10 @@ describe("canvasDrawingFiles", () => {
       saveCanvasDrawing({
         cwd,
         threadId: "drawing-4",
-        scene: { elements: "not-an-array" } as never,
+        scene: {
+          ...EMPTY_CANVAS_SCENE,
+          elements: [{ id: null, type: "rectangle" }],
+        } as never,
         expectedRevision: created.revision,
       }),
     ).rejects.toThrow();

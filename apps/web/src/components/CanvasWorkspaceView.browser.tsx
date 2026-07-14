@@ -1,12 +1,15 @@
 import "../index.css";
 
 import {
+  type CanvasDrawingSaveInput,
   type CanvasDrawingSnapshot,
   type NativeApi,
   ProjectId,
   ThreadId,
+  WsCanvasSaveDrawingRpc,
 } from "@synara/contracts";
 import { EMPTY_CANVAS_SCENE } from "@synara/shared/excalidrawScene";
+import { Schema } from "effect";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { page } from "vitest/browser";
 import { render } from "vitest-browser-react";
@@ -165,6 +168,73 @@ describe("CanvasWorkspaceView", () => {
 
       await page.getByRole("button", { name: "Show chat panel" }).click();
       await expect.element(page.getByText("Persistent Chat")).toBeVisible();
+    } finally {
+      await screen.unmount();
+    }
+  });
+
+  it("canonicalizes agent elements into a stable RPC save payload", async () => {
+    const snapshot: CanvasDrawingSnapshot = {
+      ...makeSnapshot(),
+      scene: {
+        ...EMPTY_CANVAS_SCENE,
+        elements: [
+          {
+            id: "layer-1",
+            type: "rectangle",
+            x: 120,
+            y: 140,
+            width: 420,
+            height: 100,
+            label: { text: "Application layer", fontSize: 18 },
+          },
+        ],
+      },
+    };
+    const saveDrawing = vi.fn(async (input: CanvasDrawingSaveInput) => ({
+      ...snapshot,
+      scene: input.scene,
+      revision: "revision-2",
+    }));
+    Object.defineProperty(window, "nativeApi", {
+      configurable: true,
+      value: {
+        ...window.nativeApi,
+        canvas: {
+          ...window.nativeApi?.canvas,
+          readDrawing: vi.fn(async () => snapshot),
+          saveDrawing,
+        },
+      } as NativeApi,
+    });
+
+    const screen = await render(
+      <div style={{ width: "1440px", height: "900px" }}>
+        <CanvasWorkspaceView
+          threadId={THREAD_ID}
+          projectId={PROJECT_ID}
+          projectName="Canvas Project"
+          chatPanel={<div>Persistent Chat</div>}
+        />
+      </div>,
+    );
+
+    try {
+      await expect.element(page.getByText("Saved locally")).toBeInTheDocument();
+      expect(saveDrawing).toHaveBeenCalledOnce();
+      const input = saveDrawing.mock.calls[0]?.[0];
+      expect(input).toBeDefined();
+      expect(input?.scene.files).toEqual({});
+      expect(() =>
+        Schema.encodeSync(Schema.toCodecJson(WsCanvasSaveDrawingRpc.payloadSchema))(input),
+      ).not.toThrow();
+      await new Promise((resolve) => window.setTimeout(resolve, 1_000));
+      await expect.element(page.getByText("Saved locally")).toBeInTheDocument();
+      const settledSaveCount = saveDrawing.mock.calls.length;
+      expect(settledSaveCount).toBeLessThanOrEqual(2);
+      await new Promise((resolve) => window.setTimeout(resolve, 1_000));
+      expect(saveDrawing).toHaveBeenCalledTimes(settledSaveCount);
+      await expect.element(page.getByText("Saved locally")).toBeInTheDocument();
     } finally {
       await screen.unmount();
     }

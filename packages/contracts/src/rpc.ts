@@ -18,6 +18,13 @@ import {
   AutomationStreamEvent,
   AutomationUpdateInput,
 } from "./automation";
+import {
+  CanvasDrawingCreateInput,
+  CanvasDrawingDeleteInput,
+  CanvasDrawingReadInput,
+  CanvasDrawingSaveInput,
+  CanvasScene,
+} from "./canvas";
 import { OpenInEditorInput } from "./editor";
 import { FilesystemBrowseInput, FilesystemBrowseResult } from "./filesystem";
 import { StudioListThreadOutputsInput, StudioListThreadOutputsResult } from "./studio";
@@ -377,6 +384,40 @@ export const WsProjectsStopDevServerRpc = Rpc.make(WS_METHODS.projectsStopDevSer
 export const WsProjectsListDevServersRpc = Rpc.make(WS_METHODS.projectsListDevServers, {
   payload: Schema.Struct({}),
   success: ProjectListDevServersResult,
+  error: WsRpcError,
+});
+
+const CanvasDrawingSnapshotSchema = Schema.Struct({
+  relativePath: Schema.String,
+  scene: CanvasScene,
+  revision: Schema.String,
+});
+
+const CanvasDrawingDeleteResultSchema = Schema.Struct({
+  deleted: Schema.Boolean,
+});
+
+export const WsCanvasCreateDrawingRpc = Rpc.make(WS_METHODS.canvasCreateDrawing, {
+  payload: CanvasDrawingCreateInput,
+  success: CanvasDrawingSnapshotSchema,
+  error: WsRpcError,
+});
+
+export const WsCanvasReadDrawingRpc = Rpc.make(WS_METHODS.canvasReadDrawing, {
+  payload: CanvasDrawingReadInput,
+  success: CanvasDrawingSnapshotSchema,
+  error: WsRpcError,
+});
+
+export const WsCanvasSaveDrawingRpc = Rpc.make(WS_METHODS.canvasSaveDrawing, {
+  payload: CanvasDrawingSaveInput,
+  success: CanvasDrawingSnapshotSchema,
+  error: WsRpcError,
+});
+
+export const WsCanvasDeleteDrawingRpc = Rpc.make(WS_METHODS.canvasDeleteDrawing, {
+  payload: CanvasDrawingDeleteInput,
+  success: CanvasDrawingDeleteResultSchema,
   error: WsRpcError,
 });
 
@@ -930,6 +971,10 @@ export const WsFeatureRpcGroup = RpcGroup.make(
   WsProjectsRunDevServerRpc,
   WsProjectsStopDevServerRpc,
   WsProjectsListDevServersRpc,
+  WsCanvasCreateDrawingRpc,
+  WsCanvasReadDrawingRpc,
+  WsCanvasSaveDrawingRpc,
+  WsCanvasDeleteDrawingRpc,
   WsSubscribeProjectDevServerEventsRpc,
   WsStudioListThreadOutputsRpc,
   WsFilesystemBrowseRpc,

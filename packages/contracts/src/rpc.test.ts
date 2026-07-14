@@ -1,9 +1,11 @@
 import { describe, expect, it } from "vitest";
 
+import { WS_METHODS } from "./ws";
 import {
   WsAutomationCreateRpc,
   WsBootstrapRpcGroup,
   WsFeatureRpcGroup,
+  WsCanvasCreateDrawingRpc,
   WsProjectsDiscoverScriptsRpc,
   WsPullRequestsReviewRequestCountRpc,
   WsRpcError,
@@ -38,5 +40,13 @@ describe("WS RPC contracts", () => {
 
   it("exports the count-only pull request review RPC", () => {
     expect(WsPullRequestsReviewRequestCountRpc).toBeDefined();
+  });
+
+  it("includes the canvas RPCs in the additive Effect RPC group", () => {
+    expect(WsCanvasCreateDrawingRpc).toBeDefined();
+    expect(WsRpcGroup.requests.get(WS_METHODS.canvasCreateDrawing)).toBe(WsCanvasCreateDrawingRpc);
+    expect(WsRpcGroup.requests.get(WS_METHODS.canvasReadDrawing)).toBeDefined();
+    expect(WsRpcGroup.requests.get(WS_METHODS.canvasSaveDrawing)).toBeDefined();
+    expect(WsRpcGroup.requests.get(WS_METHODS.canvasDeleteDrawing)).toBeDefined();
   });
 });
