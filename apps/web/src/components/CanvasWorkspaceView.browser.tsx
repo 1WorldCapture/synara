@@ -165,6 +165,23 @@ describe("CanvasWorkspaceView", () => {
       await expect.element(page.getByText("Persistent Chat")).toBeInTheDocument();
       await expect.element(page.getByText("Saved locally")).toBeInTheDocument();
 
+      const generatedTitle = "J2EE onion architecture";
+      useStore.setState((state) => ({
+        threads: state.threads.map((candidate) =>
+          candidate.id === THREAD_ID ? { ...candidate, title: generatedTitle } : candidate,
+        ),
+        threadShellById: {
+          ...state.threadShellById,
+          [THREAD_ID]: { ...state.threadShellById[THREAD_ID]!, title: generatedTitle },
+        },
+      }));
+      await expect.element(
+        page.getByRole("button", { name: generatedTitle }),
+      ).toBeInTheDocument();
+      await expect.element(
+        page.getByRole("main").getByText(generatedTitle),
+      ).toBeInTheDocument();
+
       await page.getByRole("button", { name: "Chat", exact: true }).click();
       expect(onExitCanvasView).toHaveBeenCalledOnce();
 

@@ -3,6 +3,7 @@
 // Layer: Web orchestration hook
 
 import type { ProjectId, ThreadId } from "@synara/contracts";
+import { buildCanvasThreadPlaceholderTitle } from "@synara/shared/chatThreads";
 import { getDefaultModel } from "@synara/shared/model";
 import { useNavigate } from "@tanstack/react-router";
 import { useCallback } from "react";
@@ -41,7 +42,7 @@ export function useHandleNewCanvasDrawing() {
         (thread) => thread.projectId === projectId && thread.surface === "canvas",
       ).length;
       const threadId = newThreadId();
-      const title = siblingCount === 0 ? "Untitled drawing" : `Untitled drawing ${siblingCount + 1}`;
+      const title = buildCanvasThreadPlaceholderTitle(siblingCount);
       let threadCreated = false;
       let drawingCreated = false;
 

@@ -42,6 +42,7 @@ import {
 } from "effect";
 import {
   buildPromptThreadTitleFallback,
+  isGenericCanvasThreadTitle,
   isGenericChatThreadTitle,
 } from "@synara/shared/chatThreads";
 import {
@@ -1670,7 +1671,11 @@ const make = Effect.gen(function* () {
       input.messageText.trim() || attachmentTitleSeed(input.attachments?.[0]) || "",
     );
     const currentTitle = thread.title.trim();
-    if (!isGenericChatThreadTitle(currentTitle) && currentTitle !== fallbackTitle) {
+    const isCanvasThread = thread.surface === "canvas";
+    const hasGenericTitle = isCanvasThread
+      ? isGenericCanvasThreadTitle(currentTitle)
+      : isGenericChatThreadTitle(currentTitle);
+    if (!hasGenericTitle && (isCanvasThread || currentTitle !== fallbackTitle)) {
       return;
     }
     const cwd = yield* resolveProjectedThreadWorkspaceCwd(thread);
@@ -1728,6 +1733,14 @@ const make = Effect.gen(function* () {
 
     if (nextTitle === currentTitle) {
       return;
+    }
+
+    if (isCanvasThread) {
+      const latestThread = yield* resolveThread(input.threadId);
+      const latestTitle = latestThread?.title.trim();
+      if (latestTitle !== currentTitle || !isGenericCanvasThreadTitle(latestTitle)) {
+        return;
+      }
     }
 
     yield* orchestrationEngine.dispatch({

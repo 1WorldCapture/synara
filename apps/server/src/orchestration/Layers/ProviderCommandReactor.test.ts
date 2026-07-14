@@ -13,6 +13,7 @@ import type {
   ProviderForkThreadResult,
   ProviderRuntimeEvent,
   ProviderSession,
+  ThreadSurface,
 } from "@synara/contracts";
 import {
   ApprovalRequestId,
@@ -132,6 +133,7 @@ describe("ProviderCommandReactor", () => {
   async function createHarness(input?: {
     readonly baseDir?: string;
     readonly threadModelSelection?: ModelSelection;
+    readonly threadSurface?: ThreadSurface;
     readonly sessionModelSwitch?: "unsupported" | "in-session" | "restart-session";
     readonly conversationRollback?: "native" | "restart-session";
     readonly checkpointStore?: Partial<CheckpointStoreShape>;
@@ -480,6 +482,7 @@ describe("ProviderCommandReactor", () => {
         commandId: CommandId.makeUnsafe("cmd-thread-create"),
         threadId: ThreadId.makeUnsafe("thread-1"),
         projectId: asProjectId("project-1"),
+        surface: input?.threadSurface ?? "chat",
         title: "Thread",
         modelSelection: modelSelection,
         interactionMode: DEFAULT_PROVIDER_INTERACTION_MODE,
@@ -3243,6 +3246,146 @@ describe("ProviderCommandReactor", () => {
     await waitFor(
       async () => (await readHarnessThread(harness))?.title === "Polish loading states",
     );
+  });
+
+  it("renames an untitled canvas from its first drawing request", async () => {
+    const harness = await createHarness({ threadSurface: "canvas" });
+    const now = new Date().toISOString();
+    harness.generateThreadTitle.mockImplementation(() =>
+      Effect.succeed({
+        title: "J2EE onion architecture",
+      }),
+    );
+
+    await Effect.runPromise(
+      harness.engine.dispatch({
+        type: "thread.meta.update",
+        commandId: CommandId.makeUnsafe("cmd-canvas-title-generic"),
+        threadId: ThreadId.makeUnsafe("thread-1"),
+        title: "Untitled drawing 2",
+      }),
+    );
+
+    await Effect.runPromise(
+      harness.engine.dispatch({
+        type: "thread.turn.start",
+        commandId: CommandId.makeUnsafe("cmd-turn-start-canvas-title"),
+        threadId: ThreadId.makeUnsafe("thread-1"),
+        message: {
+          messageId: asMessageId("user-message-canvas-title-1"),
+          role: "user",
+          text: "Draw the common J2EE architecture layers as an onion diagram",
+          attachments: [],
+        },
+        interactionMode: DEFAULT_PROVIDER_INTERACTION_MODE,
+        runtimeMode: "approval-required",
+        createdAt: now,
+      }),
+    );
+
+    await waitFor(() => harness.generateThreadTitle.mock.calls.length === 1);
+    await waitFor(async () => {
+      const readModel = await Effect.runPromise(harness.engine.getReadModel());
+      return (
+        readModel.threads.find((entry) => entry.id === ThreadId.makeUnsafe("thread-1"))?.title ===
+        "J2EE onion architecture"
+      );
+    });
+  });
+
+  it("preserves a canvas title manually set before its first drawing request", async () => {
+    const harness = await createHarness({ threadSurface: "canvas" });
+    const now = new Date().toISOString();
+    const manualTitle = "Draw a blue circle";
+
+    await Effect.runPromise(
+      harness.engine.dispatch({
+        type: "thread.meta.update",
+        commandId: CommandId.makeUnsafe("cmd-canvas-title-manual-before-turn"),
+        threadId: ThreadId.makeUnsafe("thread-1"),
+        title: manualTitle,
+      }),
+    );
+
+    await Effect.runPromise(
+      harness.engine.dispatch({
+        type: "thread.turn.start",
+        commandId: CommandId.makeUnsafe("cmd-turn-start-canvas-manual-title"),
+        threadId: ThreadId.makeUnsafe("thread-1"),
+        message: {
+          messageId: asMessageId("user-message-canvas-manual-title-1"),
+          role: "user",
+          text: manualTitle,
+          attachments: [],
+        },
+        interactionMode: DEFAULT_PROVIDER_INTERACTION_MODE,
+        runtimeMode: "approval-required",
+        createdAt: now,
+      }),
+    );
+
+    await harness.drain();
+    expect(harness.generateThreadTitle).not.toHaveBeenCalled();
+    const readModel = await Effect.runPromise(harness.engine.getReadModel());
+    expect(
+      readModel.threads.find((entry) => entry.id === ThreadId.makeUnsafe("thread-1"))?.title,
+    ).toBe(manualTitle);
+  });
+
+  it("preserves a canvas title manually set while title generation is in flight", async () => {
+    const harness = await createHarness({ threadSurface: "canvas" });
+    const now = new Date().toISOString();
+    let resolveGeneratedTitle!: (value: { readonly title: string }) => void;
+    const generatedTitle = new Promise<{ readonly title: string }>((resolve) => {
+      resolveGeneratedTitle = resolve;
+    });
+    harness.generateThreadTitle.mockImplementation(() =>
+      Effect.promise(() => generatedTitle),
+    );
+
+    await Effect.runPromise(
+      harness.engine.dispatch({
+        type: "thread.meta.update",
+        commandId: CommandId.makeUnsafe("cmd-canvas-title-generic-in-flight"),
+        threadId: ThreadId.makeUnsafe("thread-1"),
+        title: "Untitled drawing",
+      }),
+    );
+
+    await Effect.runPromise(
+      harness.engine.dispatch({
+        type: "thread.turn.start",
+        commandId: CommandId.makeUnsafe("cmd-turn-start-canvas-title-in-flight"),
+        threadId: ThreadId.makeUnsafe("thread-1"),
+        message: {
+          messageId: asMessageId("user-message-canvas-title-in-flight-1"),
+          role: "user",
+          text: "Draw a deployment pipeline",
+          attachments: [],
+        },
+        interactionMode: DEFAULT_PROVIDER_INTERACTION_MODE,
+        runtimeMode: "approval-required",
+        createdAt: now,
+      }),
+    );
+
+    await waitFor(() => harness.generateThreadTitle.mock.calls.length === 1);
+    const manualTitle = "Release flow";
+    await Effect.runPromise(
+      harness.engine.dispatch({
+        type: "thread.meta.update",
+        commandId: CommandId.makeUnsafe("cmd-canvas-title-manual-in-flight"),
+        threadId: ThreadId.makeUnsafe("thread-1"),
+        title: manualTitle,
+      }),
+    );
+    resolveGeneratedTitle({ title: "Deployment pipeline" });
+
+    await harness.drain();
+    const readModel = await Effect.runPromise(harness.engine.getReadModel());
+    expect(
+      readModel.threads.find((entry) => entry.id === ThreadId.makeUnsafe("thread-1"))?.title,
+    ).toBe(manualTitle);
   });
 
   it("uses the configured text generation model for providers without native title generation", async () => {

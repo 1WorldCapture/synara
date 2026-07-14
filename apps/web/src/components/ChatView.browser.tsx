@@ -2020,6 +2020,48 @@ describe("ChatView timeline estimator parity (full app)", () => {
     }
   });
 
+  it("refreshes the chat header when the active drawing title changes", async () => {
+    const mounted = await mountChatView({
+      viewport: DEFAULT_VIEWPORT,
+      snapshot: createSnapshotForTargetUser({
+        targetMessageId: "msg-user-drawing-title-target" as MessageId,
+        targetText: "drawing title target",
+      }),
+    });
+
+    try {
+      await vi.waitFor(
+        () => {
+          expect(document.querySelector<HTMLElement>(`h2[title='${THREAD_TITLE}']`)).toBeTruthy();
+          expect(useStore.getState().threadShellById[THREAD_ID]?.title).toBe(THREAD_TITLE);
+        },
+        { timeout: 8_000, interval: 16 },
+      );
+
+      const generatedTitle = "J2EE onion architecture";
+      useStore.setState((state) => ({
+        threads: state.threads.map((thread) =>
+          thread.id === THREAD_ID ? { ...thread, title: generatedTitle } : thread,
+        ),
+        threadShellById: {
+          ...state.threadShellById,
+          [THREAD_ID]: { ...state.threadShellById[THREAD_ID]!, title: generatedTitle },
+        },
+      }));
+
+      await vi.waitFor(
+        () => {
+          expect(
+            document.querySelector<HTMLElement>(`h2[title='${generatedTitle}']`),
+          ).toBeTruthy();
+        },
+        { timeout: 8_000, interval: 16 },
+      );
+    } finally {
+      await mounted.cleanup();
+    }
+  });
+
   it("[geometry:linux] keeps the composer visible while a long assistant response forces a viewport relayout", async () => {
     const mounted = await mountChatView({
       viewport: TEXT_VIEWPORT_MATRIX[0],

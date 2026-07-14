@@ -1,8 +1,10 @@
 import { describe, expect, it } from "vitest";
 
 import {
+  buildCanvasThreadPlaceholderTitle,
   buildPromptThreadTitleFallback,
   GENERIC_CHAT_THREAD_TITLE,
+  isGenericCanvasThreadTitle,
   isGenericChatThreadTitle,
   sanitizeGeneratedThreadTitle,
 } from "./chatThreads";
@@ -31,5 +33,17 @@ describe("chatThreads", () => {
   it("detects the generic chat placeholder title", () => {
     expect(isGenericChatThreadTitle(" New thread ")).toBe(true);
     expect(isGenericChatThreadTitle("Manual rename")).toBe(false);
+  });
+
+  it("detects only unedited canvas placeholder titles", () => {
+    expect(isGenericCanvasThreadTitle(" Untitled drawing ")).toBe(true);
+    expect(isGenericCanvasThreadTitle("Untitled drawing 2")).toBe(true);
+    expect(isGenericCanvasThreadTitle("Untitled drawing ideas")).toBe(false);
+    expect(isGenericCanvasThreadTitle("J2EE onion architecture")).toBe(false);
+  });
+
+  it("builds canvas placeholder titles from the existing drawing count", () => {
+    expect(buildCanvasThreadPlaceholderTitle(0)).toBe("Untitled drawing");
+    expect(buildCanvasThreadPlaceholderTitle(1)).toBe("Untitled drawing 2");
   });
 });
