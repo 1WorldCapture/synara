@@ -168,6 +168,7 @@ import {
   enrichSubagentWorkEntries,
   hasFileUndoSettled,
   promptStillMatchesActiveHistoryBrowse,
+  type ChatPresentationMode,
   type PendingFileUndo,
   type PromptHistoryNavigationState,
   resolveActiveThreadTitle,
@@ -180,6 +181,7 @@ import {
   resolveEnvironmentPanelPreferenceUpdate,
   resolveEnvironmentPanelVisible,
   resolveProjectScriptTerminalTarget,
+  resolveChatPresentationMode,
   resolvePromptHistoryNavigation,
   shouldHandlePromptHistoryNavigationKey,
   shouldEnableComposerPastedTextCollapse,
@@ -1025,7 +1027,7 @@ interface ChatViewProps {
   threadId: ThreadId;
   paneScopeId?: string;
   surfaceMode?: "single" | "split";
-  presentationMode?: "default" | "editor";
+  presentationMode?: ChatPresentationMode;
   isFocusedPane?: boolean;
   panelState?: SplitViewPanePanelState;
   onToggleDiffPanel?: () => void;
@@ -1035,6 +1037,7 @@ interface ChatViewProps {
   onSplitSurface?: () => void;
   onMaximizeSurface?: () => void;
   viewModeAction?: {
+    kind: "editor" | "canvas";
     label: string;
     active: boolean;
     onClick: () => void;
@@ -1125,7 +1128,7 @@ export default function ChatView({
   const { resolvedTheme } = useTheme();
   const queryClient = useQueryClient();
   const createWorktreeMutation = useMutation(gitCreateWorktreeMutationOptions({ queryClient }));
-  const isEditorRail = presentationMode === "editor";
+  const { isWorkspaceRail, showsEditorRailTabs } = resolveChatPresentationMode(presentationMode);
   const isInactiveSplitPane = surfaceMode === "split" && !isFocusedPane;
   const composerDraft = useComposerThreadDraft(threadId);
   const prompt = composerDraft.prompt;
@@ -3179,7 +3182,7 @@ export default function ChatView({
   // Home-scoped chats get the global "What should we work on?" copy plus the project picker,
   // while project-scoped drafts reuse the same centered layout with folder-specific copy.
   const isCenteredEmptyLanding =
-    timelineEntries.length === 0 && !activeThread?.parentThreadId && !isEditorRail;
+    timelineEntries.length === 0 && !activeThread?.parentThreadId && !isWorkspaceRail;
   const isEmptyChatLanding =
     isCenteredEmptyLanding && Boolean(homeDir) && isContainerLandingProject;
   const { turnDiffSummaries, inferredCheckpointTurnCountByTurnId } =
@@ -4370,7 +4373,7 @@ export default function ChatView({
   // Temporary threads are visually identical to regular chats — they use the same
   // Environment panel + header controls. "Temporary" is purely a sidebar badge +
   // auto-delete-on-leave concern, never a stripped-down chat UI.
-  const environmentEnabled = !isEditorRail;
+  const environmentEnabled = !isWorkspaceRail;
   const environmentUsesFloatingOverlay =
     isTerminalEnvironmentContext || isMobileViewport || rightDockOpen || surfaceMode === "split";
   const environmentDefaultOpen = resolveDefaultEnvironmentPanelOpen({
@@ -9998,12 +10001,12 @@ export default function ChatView({
         to: "/$threadId",
         params: { threadId: nextThreadId },
         search: (previous) =>
-          isEditorRail
+          showsEditorRailTabs
             ? { ...stripDiffSearchParams(previous), view: "editor" }
             : stripDiffSearchParams(previous),
       });
     },
-    [isEditorRail, navigate],
+    [navigate, showsEditorRailTabs],
   );
   const onOpenAutomation = useCallback(
     (automationId: string) => {
@@ -10384,7 +10387,7 @@ export default function ChatView({
     onRemoveThreadMarker: handleRemoveThreadMarker,
     onRenameThreadMarker: handleRenameThreadMarker,
     onNotesChange: handleNotesChange,
-    onOpenEditorView: viewModeAction?.onClick ?? null,
+    onOpenEditorView: viewModeAction?.kind === "editor" ? viewModeAction.onClick : null,
     onClose: closeEnvironmentPanelAfterAction,
   };
   // Full-width single chat: overlay plus transcript/composer inset. Floating overlay when the
@@ -10928,16 +10931,16 @@ export default function ChatView({
       <header
         className={cn(
           CHAT_SURFACE_HEADER_DIVIDER_CLASS_NAME,
-          !isEditorRail && CHAT_SURFACE_HEADER_PADDING_X_CLASS,
+          !isWorkspaceRail && CHAT_SURFACE_HEADER_PADDING_X_CLASS,
           "flex items-center",
-          isEditorRail ? "h-10" : CHAT_SURFACE_HEADER_HEIGHT_CLASS,
+          isWorkspaceRail ? "h-10" : CHAT_SURFACE_HEADER_HEIGHT_CLASS,
           isElectron && "drag-region",
           // The editor-rail chat header sits in the editor's second row (inside the
           // right-side chat pane), not flush against the window edges — the editor's
           // own top bar already reserves both desktop window-control gutters. Applying
           // them here just leaves redundant empty space on the sides.
-          !isEditorRail && desktopTopBarTrafficLightGutterClassName,
-          !isEditorRail && desktopTopBarWindowControlsGutterClassName,
+          !isWorkspaceRail && desktopTopBarTrafficLightGutterClassName,
+          !isWorkspaceRail && desktopTopBarWindowControlsGutterClassName,
         )}
       >
         <ChatHeader
@@ -10945,17 +10948,17 @@ export default function ChatView({
           activeThreadTitle={activeThreadDisplayTitle}
           activeThreadEntryPoint={terminalState.entryPoint}
           activeProvider={activeThread.session?.provider ?? activeThread.modelSelection.provider}
-          activeProjectName={isEditorRail ? undefined : activeProjectDisplayName}
+          activeProjectName={isWorkspaceRail ? undefined : activeProjectDisplayName}
           threadBreadcrumbs={threadBreadcrumbs}
-          {...(isEditorRail
+          {...(isWorkspaceRail
             ? { className: cn(CHAT_SURFACE_HEADER_PADDING_X_CLASS, "h-full") }
             : {})}
           isSidechat={Boolean(activeThread.sidechatSourceThreadId)}
-          hideSidebarControls={isEditorRail}
-          hideHandoffControls={terminalWorkspaceTerminalTabActive || isEditorRail}
+          hideSidebarControls={isWorkspaceRail}
+          hideHandoffControls={terminalWorkspaceTerminalTabActive || isWorkspaceRail}
           isGitRepo={isGitRepo}
           openInTarget={threadWorkspaceCwd}
-          activeProjectScripts={isEditorRail ? undefined : activeProjectScripts}
+          activeProjectScripts={isWorkspaceRail ? undefined : activeProjectScripts}
           preferredScriptId={
             activeProject ? (lastInvokedScriptByProjectId[activeProject.id] ?? null) : null
           }
@@ -10970,11 +10973,12 @@ export default function ChatView({
           handoffBadgeTargetProvider={handoffBadgeTargetProvider}
           gitCwd={threadWorkspaceCwd}
           diffTotals={repoDiffTotals}
-          showGitActions={showGitActions && !isEditorRail}
-          showDiffToggle={!isEditorRail}
+          showGitActions={showGitActions && !isWorkspaceRail}
+          showDiffToggle={!isWorkspaceRail}
           diffOpen={resolvedDiffOpen}
           diffDisabledReason={diffDisabledReason}
-          environment={isEditorRail ? null : environmentHeaderState}
+          environment={isWorkspaceRail ? null : environmentHeaderState}
+          workspaceViewAction={viewModeAction?.kind === "canvas" ? viewModeAction : null}
           surfaceMode={surfaceMode}
           chatLayoutAction={
             surfaceMode === "single" && onSplitSurface
@@ -10994,7 +10998,7 @@ export default function ChatView({
                 : null
           }
           editorChatControls={
-            isEditorRail && activeProject
+            showsEditorRailTabs && activeProject
               ? {
                   projectId: activeProject.id,
                   activeSurface: terminalWorkspaceTerminalTabActive ? "terminal" : "chat",
@@ -11066,7 +11070,7 @@ export default function ChatView({
         rateLimitStatus={visibleActiveRateLimitStatus}
         onDismiss={dismissActiveRateLimitBanner}
       />
-      {terminalWorkspaceOpen && !isEditorRail ? (
+      {terminalWorkspaceOpen && !isWorkspaceRail ? (
         <TerminalWorkspaceTabs
           activeTab={terminalState.workspaceActiveTab}
           isWorking={isWorking}
@@ -11181,7 +11185,7 @@ export default function ChatView({
                     chatFontSizePx={settings.chatFontSizePx}
                     timestampFormat={timestampFormat}
                     workspaceRoot={activeProject?.cwd ?? undefined}
-                    emptyStateContent={isEditorRail ? <span aria-hidden="true" /> : undefined}
+                    emptyStateContent={isWorkspaceRail ? <span aria-hidden="true" /> : undefined}
                     emptyStateProjectName={activeProjectDisplayName}
                     terminalWorkspaceTerminalTabActive={terminalWorkspaceTerminalTabActive}
                     onMessagesScroll={onMessagesScroll}

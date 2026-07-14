@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 
-import { parseDiffRouteSearch } from "./diffRouteSearch";
+import { isDedicatedWorkspaceView, parseDiffRouteSearch } from "./diffRouteSearch";
 
 describe("parseDiffRouteSearch", () => {
   it("parses valid diff search values", () => {
@@ -110,5 +110,24 @@ describe("parseDiffRouteSearch", () => {
         editorFilePath: "src/app.ts",
       }),
     ).toEqual({ view: "canvas" });
+  });
+
+  it("recognizes an explicit chat override for dedicated workspace threads", () => {
+    expect(parseDiffRouteSearch({ view: "chat" })).toEqual({ view: "chat" });
+  });
+});
+
+describe("isDedicatedWorkspaceView", () => {
+  it("treats editor and canvas as focused workspaces", () => {
+    expect(isDedicatedWorkspaceView("editor")).toBe(true);
+    expect(isDedicatedWorkspaceView("canvas")).toBe(true);
+    expect(isDedicatedWorkspaceView(undefined, "canvas")).toBe(true);
+  });
+
+  it("keeps the global sidebar for ordinary and unknown views", () => {
+    expect(isDedicatedWorkspaceView(undefined)).toBe(false);
+    expect(isDedicatedWorkspaceView(undefined, "chat")).toBe(false);
+    expect(isDedicatedWorkspaceView("chat", "canvas")).toBe(false);
+    expect(isDedicatedWorkspaceView("diff")).toBe(false);
   });
 });

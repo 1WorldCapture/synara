@@ -50,6 +50,13 @@ export function resolveThreadPickerTitle(title: string | null): string {
   return title || "New chat";
 }
 
+export function shouldRenderCanvasWorkspace(
+  threadSurface: unknown,
+  routeView: DiffRouteSearch["view"],
+): boolean {
+  return threadSurface === "canvas" && routeView !== "chat";
+}
+
 // File previews follow the thread runtime cwd so worktree chats open the files they actually edit.
 export function resolveFilePreviewWorkspaceRoot(input: {
   projectCwd?: string | null | undefined;

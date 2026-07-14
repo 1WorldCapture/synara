@@ -14,6 +14,7 @@ import {
   isComposerCursorOnLastLine,
   type LocalDispatchSnapshot,
   promptStillMatchesActiveHistoryBrowse,
+  resolveChatPresentationMode,
   resolvePromptHistoryNavigation,
   resolveNextLocalDispatchSnapshot,
   deriveComposerSendState,
@@ -46,6 +47,26 @@ import {
   shouldRenderTerminalWorkspace,
   worktreeSetupHasError,
 } from "./ChatView.logic";
+
+describe("chat presentation mode", () => {
+  it("keeps Canvas in the compact workspace rail without enabling Editor chat tabs", () => {
+    expect(resolveChatPresentationMode("canvas")).toEqual({
+      isWorkspaceRail: true,
+      showsEditorRailTabs: false,
+    });
+  });
+
+  it("reserves project chat tabs for the Editor rail", () => {
+    expect(resolveChatPresentationMode("editor")).toEqual({
+      isWorkspaceRail: true,
+      showsEditorRailTabs: true,
+    });
+    expect(resolveChatPresentationMode("default")).toEqual({
+      isWorkspaceRail: false,
+      showsEditorRailTabs: false,
+    });
+  });
+});
 
 describe("file undo completion", () => {
   const pending = {

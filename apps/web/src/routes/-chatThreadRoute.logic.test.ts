@@ -3,6 +3,7 @@ import { describe, expect, it } from "vitest";
 
 import {
   resolveFilePreviewWorkspaceRoot,
+  shouldRenderCanvasWorkspace,
   resolveRoutePanelBootstrap,
   resolveSplitPaneCloseDecision,
   resolveSplitPaneMaximizeDecision,
@@ -15,6 +16,15 @@ const SIDECHAT_THREAD_ID = ThreadId.makeUnsafe("thread-sidechat");
 const OTHER_THREAD_ID = ThreadId.makeUnsafe("thread-2");
 const TURN_ID = TurnId.makeUnsafe("turn-1");
 const OTHER_TURN_ID = TurnId.makeUnsafe("turn-2");
+
+describe("shouldRenderCanvasWorkspace", () => {
+  it("uses chat as an explicit override for Canvas threads", () => {
+    expect(shouldRenderCanvasWorkspace("canvas", undefined)).toBe(true);
+    expect(shouldRenderCanvasWorkspace("canvas", "canvas")).toBe(true);
+    expect(shouldRenderCanvasWorkspace("canvas", "chat")).toBe(false);
+    expect(shouldRenderCanvasWorkspace("chat", "canvas")).toBe(false);
+  });
+});
 
 describe("resolveThreadPickerTitle", () => {
   it("falls back to a stable untitled label", () => {

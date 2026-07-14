@@ -141,6 +141,7 @@ describe("CanvasWorkspaceView", () => {
   });
 
   it("renders the canvas shell and toggles the persistent chat pane", async () => {
+    const onExitCanvasView = vi.fn();
     const screen = await render(
       <div style={{ width: "1440px", height: "900px" }}>
         <CanvasWorkspaceView
@@ -148,6 +149,7 @@ describe("CanvasWorkspaceView", () => {
           projectId={PROJECT_ID}
           projectName="Canvas Project"
           chatPanel={<div>Persistent Chat</div>}
+          onExitCanvasView={onExitCanvasView}
         />
       </div>,
     );
@@ -162,6 +164,9 @@ describe("CanvasWorkspaceView", () => {
       ).toBeInTheDocument();
       await expect.element(page.getByText("Persistent Chat")).toBeInTheDocument();
       await expect.element(page.getByText("Saved locally")).toBeInTheDocument();
+
+      await page.getByRole("button", { name: "Chat", exact: true }).click();
+      expect(onExitCanvasView).toHaveBeenCalledOnce();
 
       await page.getByRole("button", { name: "Hide chat panel" }).click();
       await expect.element(page.getByText("Persistent Chat")).not.toBeVisible();
@@ -215,6 +220,7 @@ describe("CanvasWorkspaceView", () => {
           projectId={PROJECT_ID}
           projectName="Canvas Project"
           chatPanel={<div>Persistent Chat</div>}
+          onExitCanvasView={vi.fn()}
         />
       </div>,
     );

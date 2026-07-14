@@ -31,11 +31,13 @@ import { FiMessageSquare, FiPlus, FiTrash2 } from "react-icons/fi";
 import { useHandleNewCanvasDrawing } from "~/hooks/useHandleNewCanvasDrawing";
 import { useTheme } from "~/hooks/useTheme";
 import { canvasAgentMutationTurnId, isCanvasAgentEditing } from "~/lib/canvasAgentState";
+import { ChatBubbleIcon } from "~/lib/icons";
 import { cn } from "~/lib/utils";
 import { readNativeApi } from "~/nativeApi";
 import { createThreadSelector, createThreadShellsSelector } from "~/storeSelectors";
 import { useStore } from "~/store";
 import { ResizableChatPane, useResizableChatPane } from "./ResizableChatPane";
+import { ChatHeaderButton } from "./chat/chatHeaderControls";
 import { toastManager } from "./ui/toast";
 
 type SaveState = "loading" | "saved" | "saving" | "conflict" | "error";
@@ -113,6 +115,7 @@ export function CanvasWorkspaceView(props: {
   projectId: ProjectId;
   projectName: string;
   chatPanel: ReactNode;
+  onExitCanvasView: () => void;
 }) {
   const navigate = useNavigate();
   const { resolvedTheme } = useTheme();
@@ -423,6 +426,17 @@ export function CanvasWorkspaceView(props: {
           >
             <FiTrash2 className="size-3.5" />
           </button>
+          <ChatHeaderButton
+            type="button"
+            tone="outline"
+            aria-pressed={true}
+            title="Switch to chat view"
+            className="w-[5.5rem] gap-1.5"
+            onClick={props.onExitCanvasView}
+          >
+            <ChatBubbleIcon className="size-3.5" />
+            <span className="truncate font-normal">Chat</span>
+          </ChatHeaderButton>
         </header>
         <div className="relative min-h-0 flex-1" data-testid="excalidraw-canvas">
           {initialScene ? (

@@ -1,6 +1,12 @@
-import type { ResolvedKeybindingsConfig } from "@synara/contracts";
+import { ThreadId, type ResolvedKeybindingsConfig } from "@synara/contracts";
 import { useQuery } from "@tanstack/react-query";
-import { Outlet, createFileRoute, useLocation, useNavigate } from "@tanstack/react-router";
+import {
+  Outlet,
+  createFileRoute,
+  useLocation,
+  useNavigate,
+  useParams,
+} from "@tanstack/react-router";
 import { useCallback, useEffect, useRef, useState } from "react";
 
 import {
@@ -12,6 +18,7 @@ import ShortcutsDialog from "../components/ShortcutsDialog";
 import { RecentViewSwitcher } from "../components/RecentViewSwitcher";
 import { shouldRenderTerminalWorkspace } from "../components/ChatView.logic";
 import ThreadSidebar from "../components/Sidebar";
+import { isDedicatedWorkspaceView } from "../diffRouteSearch";
 import { isElectron } from "../env";
 import { useHandleNewChat } from "../hooks/useHandleNewChat";
 import { useHandleNewStudioChat } from "../hooks/useHandleNewStudioChat";
@@ -530,11 +537,27 @@ const SIDEBAR_GAP_CLASS =
 const SIDEBAR_INNER_CLASS = "app-sidebar-surface";
 
 function ChatRouteLayout() {
-  const isEditorView = useLocation({
-    select: (location) => (location.search as { view?: unknown }).view === "editor",
+  const routeThreadId = useParams({
+    strict: false,
+    select: (params) =>
+      typeof params.threadId === "string" ? ThreadId.makeUnsafe(params.threadId) : null,
   });
+  const activeThreadSurface = useStore(
+    useCallback(
+      (state) =>
+        routeThreadId
+          ? (state.threadShellById[routeThreadId]?.surface ??
+            state.threads.find((thread) => thread.id === routeThreadId)?.surface)
+          : undefined,
+      [routeThreadId],
+    ),
+  );
+  const routeView = useLocation({
+    select: (location) => (location.search as { view?: unknown }).view,
+  });
+  const isDedicatedWorkspace = isDedicatedWorkspaceView(routeView, activeThreadSurface);
   const [sidebarOpen, setSidebarOpen] = useState(true);
-  const resolvedSidebarOpen = isEditorView ? false : sidebarOpen;
+  const resolvedSidebarOpen = isDedicatedWorkspace ? false : sidebarOpen;
 
   // The thread sidebar always lives on the left; the right dock is a separate surface.
   const sidebarElement = (
@@ -561,7 +584,7 @@ function ChatRouteLayout() {
   // `data-sidebar-side` on the provider selects the seam geometry.
   const mainContentShell = (
     <div className="chat-content-card-backing relative flex h-svh min-h-0 min-w-0 flex-1">
-      {isEditorView ? null : (
+      {isDedicatedWorkspace ? null : (
         <SidebarInstanceProvider side="left" resizable={THREAD_SIDEBAR_RESIZABLE}>
           <SidebarRail placement="content-seam" />
         </SidebarInstanceProvider>

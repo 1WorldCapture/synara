@@ -133,6 +133,7 @@ import {
   createThreadWorkspaceMetadataSelector,
 } from "../storeSelectors";
 import { sortThreadsForSidebar } from "../components/Sidebar.logic";
+import type { ChatPresentationMode } from "../components/ChatView.logic";
 import { Button } from "../components/ui/button";
 import {
   Dialog,
@@ -150,6 +151,7 @@ import {
   resolveSplitPaneMaximizeDecision,
   resolveThreadPickerTitle,
   resolveToggledChatPanelPatch,
+  shouldRenderCanvasWorkspace,
 } from "./-chatThreadRoute.logic";
 import { getLocalStorageItem, setLocalStorageItem } from "~/hooks/useLocalStorage";
 import {
@@ -702,7 +704,7 @@ function DeferredChatView(props: {
   paneScopeId: string;
   deferMount: boolean;
   surfaceMode: "single" | "split";
-  presentationMode?: "default" | "editor";
+  presentationMode?: ChatPresentationMode;
   isFocusedPane: boolean;
   panelState: SplitViewPanePanelState;
   onToggleDiff: () => void;
@@ -712,6 +714,7 @@ function DeferredChatView(props: {
   onSplitSurface?: () => void;
   onMaximize?: () => void;
   viewModeAction?: {
+    kind: "editor" | "canvas";
     label: string;
     active: boolean;
     onClick: () => void;
@@ -1603,6 +1606,28 @@ function SingleChatSurface(props: {
     });
   }, [navigate, props.threadId]);
 
+  const handleOpenCanvasView = useCallback(() => {
+    void navigate({
+      to: "/$threadId",
+      params: { threadId: props.threadId },
+      search: (previous) => ({
+        ...stripEditorViewSearchParams(stripDiffSearchParams(previous)),
+        view: "canvas",
+      }),
+    });
+  }, [navigate, props.threadId]);
+
+  const handleCloseCanvasView = useCallback(() => {
+    void navigate({
+      to: "/$threadId",
+      params: { threadId: props.threadId },
+      search: (previous) => ({
+        ...stripEditorViewSearchParams(stripDiffSearchParams(previous)),
+        view: "chat",
+      }),
+    });
+  }, [navigate, props.threadId]);
+
   const handleSelectEditorFile = useCallback(
     (filePath: string) => {
       setEditorCenterMode("file");
@@ -2230,7 +2255,11 @@ function SingleChatSurface(props: {
     [editorCenterMode, editorDiffPanelState.diffFilePath, editorDiffPanelState.diffTurnId],
   );
 
-  if (activeThread?.surface === "canvas" && activeProject && props.projectId) {
+  if (
+    shouldRenderCanvasWorkspace(activeThread?.surface, props.search.view) &&
+    activeProject &&
+    props.projectId
+  ) {
     return (
       <div className={cn(CHAT_MAIN_VIEWPORT_SHELL_CLASS_NAME, CHAT_MAIN_CONTENT_SURFACE_CLASS_NAME)}>
         <Suspense fallback={<ChatMountSkeleton />}>
@@ -2239,6 +2268,7 @@ function SingleChatSurface(props: {
             threadId={props.threadId}
             projectId={props.projectId}
             projectName={activeProject.name}
+            onExitCanvasView={handleCloseCanvasView}
             chatPanel={
               <SidebarInset
                 className="min-h-0 min-w-0 overflow-hidden overscroll-y-none text-foreground"
@@ -2249,7 +2279,7 @@ function SingleChatSurface(props: {
                   paneScopeId={`canvas:${props.threadId}`}
                   deferMount={false}
                   surfaceMode="split"
-                  presentationMode="editor"
+                  presentationMode="canvas"
                   isFocusedPane
                   panelState={CANVAS_CHAT_PANEL_STATE}
                   onToggleDiff={noop}
@@ -2359,11 +2389,21 @@ function SingleChatSurface(props: {
               onOpenBrowserUrl={handleOpenBrowserUrl}
               onOpenTurnDiff={handleOpenTurnDiff}
               onSplitSurface={handleSplitSurface}
-              viewModeAction={{
-                label: "Editor view",
-                active: false,
-                onClick: handleOpenEditorView,
-              }}
+              viewModeAction={
+                activeThread?.surface === "canvas"
+                  ? {
+                      kind: "canvas",
+                      label: "Canvas view",
+                      active: false,
+                      onClick: handleOpenCanvasView,
+                    }
+                  : {
+                      kind: "editor",
+                      label: "Editor view",
+                      active: false,
+                      onClick: handleOpenEditorView,
+                    }
+              }
             />
           </RouteInsetSurface>
         </ChatPaneDropOverlay>

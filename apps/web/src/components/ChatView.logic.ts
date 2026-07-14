@@ -48,6 +48,18 @@ export const LAST_INVOKED_SCRIPT_BY_PROJECT_KEY = "synara:last-invoked-script-by
 export const DISMISSED_PROVIDER_HEALTH_BANNERS_KEY = "synara:dismissed-provider-health-banners";
 export const PROMPT_HISTORY_MAX_ENTRIES = 100;
 
+export type ChatPresentationMode = "default" | "editor" | "canvas";
+
+export function resolveChatPresentationMode(mode: ChatPresentationMode): {
+  isWorkspaceRail: boolean;
+  showsEditorRailTabs: boolean;
+} {
+  return {
+    isWorkspaceRail: mode !== "default",
+    showsEditorRailTabs: mode === "editor",
+  };
+}
+
 export const LastInvokedScriptByProjectSchema = Schema.Record(ProjectId, Schema.String);
 export const DismissedProviderHealthBannersSchema = Schema.Array(Schema.String);
 
