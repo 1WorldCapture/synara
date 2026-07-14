@@ -142,6 +142,16 @@ const buildCmd = Command.make(
         })`bun tsdown`,
       );
 
+      const canvasMcpDist = path.join(repoRoot, "packages/excalidraw-mcp/dist");
+      const canvasMcpEntry = path.join(canvasMcpDist, "main.mjs");
+      if (!(yield* fs.exists(canvasMcpEntry))) {
+        return yield* new CliError({
+          message: `Missing Canvas MCP build at ${canvasMcpEntry}. Build workspace dependencies first.`,
+        });
+      }
+      yield* fs.copy(canvasMcpDist, path.join(serverDir, "dist/excalidraw-mcp"));
+      yield* Effect.log("[cli] Bundled Canvas MCP into dist/excalidraw-mcp");
+
       const webDist = path.join(repoRoot, "apps/web/dist");
       const clientTarget = path.join(serverDir, "dist/client");
 
@@ -181,6 +191,7 @@ const publishCmd = Command.make(
         "dist/index.mjs",
         "dist/restoreMigrationBackup.mjs",
         "dist/client/index.html",
+        "dist/excalidraw-mcp/main.mjs",
       ]) {
         const abs = path.join(serverDir, relPath);
         if (!(yield* fs.exists(abs))) {

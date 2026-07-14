@@ -1059,6 +1059,22 @@ export function makeGrokAdapter(
             grokSettings: effectiveGrokSettings,
             childProcessSpawner,
             cwd,
+            ...(input.canvas
+              ? {
+                  mcpServers: [
+                    {
+                      name: "synara-excalidraw",
+                      command: input.canvas.mcpCommand,
+                      args: input.canvas.mcpArgs,
+                      env: [
+                        { name: "SYNARA_CANVAS_BRIDGE_URL", value: input.canvas.bridgeUrl },
+                        { name: "SYNARA_CANVAS_BRIDGE_TOKEN", value: input.canvas.bridgeToken },
+                        { name: "SYNARA_CANVAS_THREAD_ID", value: input.canvas.threadId },
+                      ],
+                    },
+                  ],
+                }
+              : {}),
             ...(resumeSessionId ? { resumeSessionId } : {}),
             clientInfo: { name: "Synara", version: "0.0.0" },
             ...acpRuntimeLoggers,

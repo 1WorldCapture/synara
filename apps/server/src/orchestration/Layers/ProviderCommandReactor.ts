@@ -2,6 +2,9 @@
 // Purpose: Routes orchestration intents into provider sessions and maintains replay-safe context.
 // Layer: Orchestration provider reactor
 
+import { createRequire } from "node:module";
+import path from "node:path";
+
 import {
   type ChatAttachment,
   CommandId,
@@ -56,6 +59,13 @@ import {
   resolveThreadWorkspaceCwd,
 } from "../../checkpointing/Utils.ts";
 import { CheckpointStore } from "../../checkpointing/Services/CheckpointStore.ts";
+import { wrapCanvasAgentContext } from "../../canvasAgentContext.ts";
+import {
+  issueCanvasBridgeCapability,
+  revokeCanvasBridgeCapability,
+  startCanvasBridgeServer,
+} from "../../canvasBridge.ts";
+import { createCanvasDrawing } from "../../canvasDrawingFiles.ts";
 import { GitCore } from "../../git/Services/GitCore.ts";
 import {
   ProviderAdapterRequestError,
@@ -335,6 +345,10 @@ const make = Effect.gen(function* () {
   const serverSettings = yield* ServerSettingsService;
   const managedAttachments = yield* ManagedAttachmentRepository;
   const serverConfig = yield* ServerConfig;
+  const canvasBridgeServer = yield* Effect.acquireRelease(
+    Effect.tryPromise(() => startCanvasBridgeServer()),
+    (server) => Effect.promise(() => server.close()).pipe(Effect.catch(() => Effect.void)),
+  );
   const handledTurnStartKeys = yield* Cache.make<string, true>({
     capacity: HANDLED_TURN_START_KEY_MAX,
     timeToLive: HANDLED_TURN_START_KEY_TTL,
@@ -351,6 +365,13 @@ const make = Effect.gen(function* () {
     );
 
   const threadProviderOptions = new Map<string, ProviderStartOptions>();
+  const canvasBridgeTokens = new Map<string, string>();
+  const revokeCanvasBridgeForThread = (threadId: string) => {
+    const token = canvasBridgeTokens.get(threadId);
+    if (!token) return;
+    revokeCanvasBridgeCapability(token);
+    canvasBridgeTokens.delete(threadId);
+  };
   // The selection last applied to each live session. Keep this separate from
   // projected thread metadata so an option changed mid-turn is still compared
   // against the old subprocess configuration before the next turn starts.
@@ -564,6 +585,35 @@ const make = Effect.gen(function* () {
 
   const resolveThread = Effect.fnUntraced(function* (threadId: ThreadId) {
     return Option.getOrUndefined(yield* projectionSnapshotQuery.getThreadDetailById(threadId));
+  });
+
+  const initializeCanvasDrawingForThread = Effect.fnUntraced(function* (input: {
+    readonly threadId: ThreadId;
+    readonly projectId: ProjectId;
+  }) {
+    const project = Option.getOrUndefined(
+      yield* projectionSnapshotQuery.getProjectShellById(input.projectId),
+    );
+    if (!project) {
+      yield* Effect.logWarning("provider command reactor could not initialize canvas drawing", {
+        threadId: input.threadId,
+        projectId: input.projectId,
+        reason: "project missing from projection",
+      });
+      return;
+    }
+    yield* Effect.tryPromise(() =>
+      createCanvasDrawing({ cwd: project.workspaceRoot, threadId: input.threadId })
+    ).pipe(
+      Effect.catch((error) =>
+        Effect.logWarning("provider command reactor failed to initialize canvas drawing", {
+          threadId: input.threadId,
+          projectId: input.projectId,
+          workspaceRoot: project.workspaceRoot,
+          cause: error instanceof Error ? error.message : String(error),
+        }),
+      ),
+    );
   });
 
   // Recovers the parent thread when older/local-only subagent rows are missing parentThreadId metadata.
@@ -844,12 +894,45 @@ const make = Effect.gen(function* () {
         .listSessions()
         .pipe(Effect.map((sessions) => sessions.find((session) => session.threadId === threadId)));
 
-    const startProviderSession = (resumeCursor?: unknown) =>
-      providerService.startSession(threadId, {
+    const startProviderSession = (resumeCursor?: unknown) => {
+      const canvas =
+        thread.surface === "canvas" && preferredProvider === "grok" && effectiveCwd
+          ? (() => {
+              const previousToken = canvasBridgeTokens.get(threadId);
+              if (previousToken) revokeCanvasBridgeForThread(threadId);
+              const grant = issueCanvasBridgeCapability({ cwd: effectiveCwd, threadId });
+              canvasBridgeTokens.set(threadId, grant.token);
+              const mcpEntryPath = process.versions.bun
+                ? path.join(
+                    path.dirname(
+                      createRequire(import.meta.url).resolve(
+                        "@synara/excalidraw-mcp/package.json",
+                      ),
+                    ),
+                    "src/main.ts",
+                  )
+                : path.join(import.meta.dirname, "excalidraw-mcp/main.mjs");
+              return {
+                bridgeUrl: canvasBridgeServer.baseUrl,
+                bridgeToken: grant.token,
+                threadId,
+                mcpCommand: process.execPath,
+                mcpArgs: [mcpEntryPath],
+              } as const;
+            })()
+          : undefined;
+      const start = providerService.startSession(threadId, {
         ...providerSessionOptions,
         ...(preferredProvider ? { provider: preferredProvider } : {}),
         ...(resumeCursor !== undefined ? { resumeCursor } : {}),
+        ...(canvas ? { canvas } : {}),
       });
+      return canvas
+        ? start.pipe(
+            Effect.onError(() => Effect.sync(() => revokeCanvasBridgeForThread(threadId))),
+          )
+        : start;
+    };
 
     const bindSessionToThread = (session: ProviderSession) =>
       setThreadSession({
@@ -1046,9 +1129,13 @@ const make = Effect.gen(function* () {
     if (input.modelSelection !== undefined) {
       threadSessionModelSelections.set(input.threadId, input.modelSelection);
     }
+    const userMessageWithSurfaceContext =
+      thread.surface === "canvas"
+        ? wrapCanvasAgentContext({ threadId: thread.id, messageText: input.messageText })
+        : input.messageText;
     const boundaryMessageText = thread.sidechatSourceThreadId
-      ? `<sidechat_boundary>\n${SIDECHAT_BOUNDARY_INSTRUCTION}\n</sidechat_boundary>\n\n<latest_user_message>\n${input.messageText}\n</latest_user_message>`
-      : input.messageText;
+      ? `<sidechat_boundary>\n${SIDECHAT_BOUNDARY_INSTRUCTION}\n</sidechat_boundary>\n\n<latest_user_message>\n${userMessageWithSurfaceContext}\n</latest_user_message>`
+      : userMessageWithSurfaceContext;
     const shouldBootstrapHandoff =
       thread.handoff?.bootstrapStatus === "pending" &&
       !hasNativeAssistantMessagesBefore(thread, input.messageId);
@@ -2356,6 +2443,7 @@ const make = Effect.gen(function* () {
     drainingQueuedTurns.delete(thread.id);
     clearPendingContextBootstraps(thread.id);
     suppressContextBootstrapOnNextStartThreadIds.add(thread.id);
+    revokeCanvasBridgeForThread(thread.id);
 
     const now = event.payload.createdAt;
     const providerThreadId =
@@ -2434,6 +2522,12 @@ const make = Effect.gen(function* () {
         }
         case "thread.created":
           threadSessionModelSelections.set(event.payload.threadId, event.payload.modelSelection);
+          if (event.payload.surface === "canvas") {
+            yield* initializeCanvasDrawingForThread({
+              threadId: event.payload.threadId,
+              projectId: event.payload.projectId,
+            });
+          }
           return;
         case "thread.meta-updated": {
           const thread = yield* resolveThread(event.payload.threadId);

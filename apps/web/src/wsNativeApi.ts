@@ -459,6 +459,12 @@ export function createWsNativeApi(): NativeApi {
       listDevServers: () => transport.request(WS_METHODS.projectsListDevServers),
       onDevServerEvent: projectDevServerEventListeners.subscribe,
     },
+    canvas: {
+      createDrawing: (input) => transport.request(WS_METHODS.canvasCreateDrawing, input),
+      readDrawing: (input) => transport.request(WS_METHODS.canvasReadDrawing, input),
+      saveDrawing: (input) => transport.request(WS_METHODS.canvasSaveDrawing, input),
+      deleteDrawing: (input) => transport.request(WS_METHODS.canvasDeleteDrawing, input),
+    },
     filesystem: {
       browse: (input) => transport.request(WS_METHODS.filesystemBrowse, input),
     },

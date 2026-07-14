@@ -28,6 +28,7 @@ import type {
   ProviderInteractionMode,
   ProjectKind,
   RuntimeMode,
+  ThreadSurface,
   ThreadEnvironmentMode,
 } from "@synara/contracts";
 
@@ -203,6 +204,7 @@ export interface Thread extends ThreadWorkspaceState {
   id: ThreadId;
   codexThreadId: string | null;
   projectId: ProjectId;
+  surface?: ThreadSurface;
   title: string;
   modelSelection: ModelSelection;
   runtimeMode: RuntimeMode;
@@ -242,6 +244,7 @@ export interface ThreadShell extends ThreadWorkspaceState {
   id: ThreadId;
   codexThreadId: string | null;
   projectId: ProjectId;
+  surface?: ThreadSurface;
   title: string;
   modelSelection: ModelSelection;
   runtimeMode: RuntimeMode;
@@ -282,6 +285,7 @@ export interface ThreadTurnState {
 export interface SidebarThreadSummary {
   id: ThreadId;
   projectId: ProjectId;
+  surface?: ThreadSurface;
   title: string;
   modelSelection: ModelSelection;
   interactionMode: ProviderInteractionMode;

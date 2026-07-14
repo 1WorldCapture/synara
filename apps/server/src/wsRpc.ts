@@ -39,6 +39,13 @@ import {
   type AuthenticatedSession,
   type ServerAuthShape,
 } from "./auth/Services/ServerAuth";
+import {
+  createCanvasDrawing,
+  readCanvasDrawing,
+  restoreTrashedCanvasDrawing,
+  saveCanvasDrawing,
+  trashCanvasDrawing,
+} from "./canvasDrawingFiles";
 import { SessionCredentialService } from "./auth/Services/SessionCredentialService";
 import { CheckpointDiffQuery } from "./checkpointing/Services/CheckpointDiffQuery";
 import { resolveThreadWorkspaceCwd } from "./checkpointing/Utils";
@@ -579,6 +586,25 @@ const makeWsRpcHandlersLayer = () =>
       const rpcEffect = <A, E, R>(effect: Effect.Effect<A, E, R>, fallbackMessage: string) =>
         effect.pipe(Effect.mapError((cause) => toWsRpcError(cause, fallbackMessage)));
 
+      const resolveCanvasDrawingInput = <A extends { readonly threadId: ThreadId }>(input: A) =>
+        Effect.gen(function* () {
+          const thread = Option.getOrUndefined(
+            yield* projectionReadModelQuery.getThreadShellById(input.threadId),
+          );
+          if (!thread || thread.surface !== "canvas") {
+            return yield* Effect.fail(
+              new Error("Canvas drawing access requires an active Canvas thread."),
+            );
+          }
+          const project = Option.getOrUndefined(
+            yield* projectionReadModelQuery.getProjectShellById(thread.projectId),
+          );
+          if (!project) {
+            return yield* Effect.fail(new Error("The Canvas thread project is unavailable."));
+          }
+          return { ...input, cwd: project.workspaceRoot };
+        });
+
       return AdmittedWsFeatureRpcGroup.of({
         [ORCHESTRATION_WS_METHODS.dispatchCommand]: (command) =>
           rpcEffect(
@@ -805,6 +831,56 @@ const makeWsRpcHandlersLayer = () =>
           ),
         [WS_METHODS.projectsWriteFile]: (input) =>
           rpcEffect(workspaceFileSystem.writeFile(input), "Failed to write workspace file"),
+        [WS_METHODS.canvasCreateDrawing]: (input) =>
+          rpcEffect(
+            resolveCanvasDrawingInput(input).pipe(
+              Effect.flatMap((resolved) => Effect.tryPromise(() => createCanvasDrawing(resolved))),
+            ),
+            "Failed to create canvas drawing",
+          ),
+        [WS_METHODS.canvasReadDrawing]: (input) =>
+          rpcEffect(
+            resolveCanvasDrawingInput(input).pipe(
+              Effect.flatMap((resolved) => Effect.tryPromise(() => readCanvasDrawing(resolved))),
+            ),
+            "Failed to read canvas drawing",
+          ),
+        [WS_METHODS.canvasSaveDrawing]: (input) =>
+          rpcEffect(
+            resolveCanvasDrawingInput(input).pipe(
+              Effect.flatMap((resolved) => Effect.tryPromise(() => saveCanvasDrawing(resolved))),
+            ),
+            "Failed to save canvas drawing",
+          ),
+        [WS_METHODS.canvasDeleteDrawing]: (input) =>
+          rpcEffect(
+            resolveCanvasDrawingInput(input).pipe(
+              Effect.flatMap((resolved) =>
+                Effect.gen(function* () {
+                  const trashed = yield* Effect.tryPromise(() => trashCanvasDrawing(resolved));
+                  yield* runtimeStartup
+                    .enqueueCommand(
+                      orchestrationEngine.dispatch({
+                        type: "thread.delete",
+                        commandId: CommandId.makeUnsafe(
+                          `server:canvas-delete:${crypto.randomUUID()}`,
+                        ),
+                        threadId: resolved.threadId,
+                      }),
+                    )
+                    .pipe(
+                      Effect.onError(() =>
+                        Effect.tryPromise(() => restoreTrashedCanvasDrawing(trashed)).pipe(
+                          Effect.catch(() => Effect.void),
+                        ),
+                      ),
+                    );
+                  return { deleted: trashed !== null };
+                }),
+              ),
+            ),
+            "Failed to delete canvas drawing",
+          ),
         [WS_METHODS.projectsRunDevServer]: (input) =>
           rpcEffect(devServerManager.run(input), "Failed to start dev server"),
         [WS_METHODS.projectsStopDevServer]: (input) =>
