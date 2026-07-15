@@ -23,7 +23,7 @@ import { render } from "vitest-browser-react";
 import { resetWsNativeApiForTest } from "../wsNativeApi";
 import { useComposerDraftStore } from "../composerDraftStore";
 import { useStore } from "../store";
-import { CanvasWorkspaceView } from "./CanvasWorkspaceView";
+import { CanvasDockPane } from "./CanvasDockPane";
 
 const { addFilesMock, excalidrawOnChangeRef, updateSceneMock } = vi.hoisted(() => ({
   addFilesMock: vi.fn(),
@@ -71,14 +71,6 @@ vi.mock("@tanstack/react-router", async () => {
   };
 });
 
-vi.mock("~/hooks/useDesktopTopBarGutter", async (importOriginal) => {
-  const actual = await importOriginal<typeof import("~/hooks/useDesktopTopBarGutter")>();
-  return {
-    ...actual,
-    useDesktopTopBarTrafficLightGutterClassName: () => "test-traffic-light-gutter",
-  };
-});
-
 const PROJECT_ID = ProjectId.makeUnsafe("project-canvas-browser");
 const THREAD_ID = ThreadId.makeUnsafe("thread-canvas-browser");
 const NOW_ISO = "2026-07-14T00:00:00.000Z";
@@ -98,7 +90,7 @@ function renderWithQueryClient(element: ReactElement) {
   return render(<QueryClientProvider client={queryClient}>{element}</QueryClientProvider>);
 }
 
-describe("CanvasWorkspaceView", () => {
+describe("CanvasDockPane", () => {
   let previousNativeApi: NativeApi | undefined;
 
   beforeEach(() => {
@@ -135,7 +127,6 @@ describe("CanvasWorkspaceView", () => {
           id: THREAD_ID,
           codexThreadId: null,
           projectId: PROJECT_ID,
-          surface: "canvas",
           title: "Canvas Thread",
           modelSelection: { provider: "grok", model: "grok-4" },
           runtimeMode: "full-access",
@@ -159,7 +150,6 @@ describe("CanvasWorkspaceView", () => {
           id: THREAD_ID,
           codexThreadId: null,
           projectId: PROJECT_ID,
-          surface: "canvas",
           title: "Canvas Thread",
           modelSelection: { provider: "grok", model: "grok-4" },
           runtimeMode: "full-access",
@@ -192,7 +182,6 @@ describe("CanvasWorkspaceView", () => {
         canvas: {
           readDrawing: vi.fn(async () => snapshot),
           saveDrawing: vi.fn(async () => snapshot),
-          deleteDrawing: vi.fn(async () => ({ deleted: true })),
           createDrawing: vi.fn(async () => snapshot),
           onDrawingChanged: vi.fn(() => () => undefined),
           onAgentPreview: vi.fn(() => () => undefined),
@@ -213,114 +202,108 @@ describe("CanvasWorkspaceView", () => {
     document.body.innerHTML = "";
   });
 
-  it("renders the canvas shell and toggles the persistent chat pane", async () => {
-    const onExitCanvasView = vi.fn();
-    const screen = await renderWithQueryClient(
-      <div style={{ width: "1440px", height: "900px" }}>
-        <CanvasWorkspaceView
-          threadId={THREAD_ID}
-          projectId={PROJECT_ID}
-          projectName="Canvas Project"
-          chatPanel={<div>Persistent Chat</div>}
-          onExitCanvasView={onExitCanvasView}
-        />
-      </div>,
-    );
-
-    try {
-      await expect.element(page.getByText("Canvas Project")).toBeInTheDocument();
-      await expect
-        .element(page.getByTestId("canvas-project-header"))
-        .toHaveClass("test-traffic-light-gutter");
-      await expect.element(
-        page.getByRole("button", { name: "Canvas Thread" }),
-      ).toBeInTheDocument();
-      await expect.element(
-        page.getByRole("main").getByText("Canvas Thread"),
-      ).toBeInTheDocument();
-      await expect.element(page.getByText("Persistent Chat")).toBeInTheDocument();
-      await expect.element(page.getByText("Saved locally")).toBeInTheDocument();
-
-      const generatedTitle = "J2EE onion architecture";
-      useStore.setState((state) => ({
-        threads: state.threads.map((candidate) =>
-          candidate.id === THREAD_ID ? { ...candidate, title: generatedTitle } : candidate,
-        ),
-        threadShellById: {
-          ...state.threadShellById,
-          [THREAD_ID]: { ...state.threadShellById[THREAD_ID]!, title: generatedTitle },
-        },
-      }));
-      await expect.element(
-        page.getByRole("button", { name: generatedTitle }),
-      ).toBeInTheDocument();
-      await expect.element(
-        page.getByRole("main").getByText(generatedTitle),
-      ).toBeInTheDocument();
-
-      await page.getByRole("button", { name: "Chat", exact: true }).click();
-      expect(onExitCanvasView).toHaveBeenCalledOnce();
-
-      await page.getByRole("button", { name: "Hide chat panel" }).click();
-      await expect.element(page.getByText("Persistent Chat")).not.toBeVisible();
-
-      await page.getByRole("button", { name: "Show chat panel" }).click();
-      await expect.element(page.getByText("Persistent Chat")).toBeVisible();
-    } finally {
-      await screen.unmount();
-    }
-  });
-
-  it("creates a drawing with the Chat-preferred provider and its runtime default model", async () => {
-    const dispatchCommand = vi.fn(async () => ({ sequence: 2 }));
-    const listModels = vi.fn(async () => ({
-      models: [
-        { slug: "grok-4.5", name: "Grok 4.5" },
-        { slug: "grok-composer-2.5-fast", name: "Grok Composer 2.5 Fast" },
-      ],
-      source: "grok-cli",
+  it("ensures lazily, clears through save, and reuses the Drawing after remount", async () => {
+    useStore.setState((state) => ({
+      threads: state.threads.map((thread) =>
+        thread.id === THREAD_ID
+          ? { ...thread, modelSelection: { provider: "pi", model: "pi-runtime-model" } }
+          : thread,
+      ),
     }));
+    let snapshot: CanvasDrawingSnapshot = {
+      ...makeSnapshot(),
+      scene: {
+        ...EMPTY_CANVAS_SCENE,
+        elements: [{ id: "existing", type: "rectangle", version: 1 }],
+      },
+    };
+    const createDrawing = vi.fn(async () => snapshot);
+    const readDrawing = vi.fn(async () => snapshot);
+    const dispatchCommand = vi.fn(async () => ({ sequence: 1 }));
+    const saveDrawing = vi.fn(async (input: CanvasDrawingSaveInput) => {
+      snapshot = {
+        relativePath: snapshot.relativePath,
+        scene: input.scene,
+        revision: `revision-${saveDrawing.mock.calls.length + 1}`,
+      };
+      return snapshot;
+    });
     Object.defineProperty(window, "nativeApi", {
       configurable: true,
       value: {
         ...window.nativeApi,
-        provider: { listModels },
+        canvas: {
+          ...window.nativeApi?.canvas,
+          createDrawing,
+          readDrawing,
+          saveDrawing,
+        },
         orchestration: { dispatchCommand },
       } as NativeApi,
     });
+    const confirm = vi.spyOn(window, "confirm").mockReturnValue(true);
 
-    const screen = await renderWithQueryClient(
+    const dormantMount = await renderWithQueryClient(
+      <CanvasDockPane threadId={THREAD_ID} active={false} />,
+    );
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    expect(createDrawing).not.toHaveBeenCalled();
+    await dormantMount.unmount();
+
+    const firstMount = await renderWithQueryClient(
       <div style={{ width: "1440px", height: "900px" }}>
-        <CanvasWorkspaceView
-          threadId={THREAD_ID}
-          projectId={PROJECT_ID}
-          projectName="Canvas Project"
-          chatPanel={<div>Persistent Chat</div>}
-          onExitCanvasView={vi.fn()}
-        />
+        <CanvasDockPane threadId={THREAD_ID} />
       </div>,
     );
+    let firstMountActive = true;
 
     try {
-      await page.getByRole("button", { name: "New AI drawing" }).click();
-      await vi.waitFor(() => expect(dispatchCommand).toHaveBeenCalled());
-      expect(listModels).toHaveBeenCalledWith(
-        expect.objectContaining({ provider: "grok", cwd: "/repo/canvas-project" }),
-      );
-      expect(dispatchCommand).toHaveBeenCalledWith(
+      await expect.element(page.getByTestId("canvas-dock-pane")).toBeInTheDocument();
+      await expect.element(page.getByText("Saved locally")).toBeInTheDocument();
+      expect(createDrawing).toHaveBeenCalledOnce();
+      expect(readDrawing).not.toHaveBeenCalled();
+
+      await page.getByRole("button", { name: "Clear" }).click();
+      await vi.waitFor(() => expect(saveDrawing).toHaveBeenCalledOnce());
+      expect(saveDrawing).toHaveBeenCalledWith(
         expect.objectContaining({
-          type: "thread.create",
-          surface: "canvas",
-          projectId: PROJECT_ID,
-          modelSelection: { provider: "grok", model: "grok-4.5" },
+          threadId: THREAD_ID,
+          expectedRevision: "revision-1",
+          scene: expect.objectContaining({ elements: [] }),
         }),
       );
+      expect(createDrawing).toHaveBeenCalledOnce();
+
+      await firstMount.unmount();
+      firstMountActive = false;
+      const secondMount = await renderWithQueryClient(
+        <div style={{ width: "1440px", height: "900px" }}>
+          <CanvasDockPane threadId={THREAD_ID} />
+        </div>,
+      );
+      try {
+        await expect.element(page.getByText("Saved locally")).toBeInTheDocument();
+        expect(createDrawing).toHaveBeenCalledTimes(2);
+        expect(readDrawing).not.toHaveBeenCalled();
+
+        await new Promise((resolve) => requestAnimationFrame(() => resolve(undefined)));
+        excalidrawOnChangeRef.current?.(
+          [{ id: "local-after-remount", type: "ellipse" }],
+          {},
+          {},
+        );
+      } finally {
+        await secondMount.unmount();
+      }
+      await vi.waitFor(() => expect(saveDrawing).toHaveBeenCalledTimes(2));
+      expect(dispatchCommand).not.toHaveBeenCalled();
     } finally {
-      await screen.unmount();
+      confirm.mockRestore();
+      if (firstMountActive) await firstMount.unmount();
     }
   });
 
-  it("renders ephemeral preview batches, yields camera control, and keeps one editor in full screen", async () => {
+  it("renders ephemeral preview batches and yields camera control", async () => {
     const snapshot = makeSnapshot();
     const saveDrawing = vi.fn(async () => snapshot);
     const dispatchCommand = vi.fn(async () => ({ sequence: 2 }));
@@ -345,13 +328,7 @@ describe("CanvasWorkspaceView", () => {
 
     const screen = await renderWithQueryClient(
       <div style={{ width: "1440px", height: "900px" }}>
-        <CanvasWorkspaceView
-          threadId={THREAD_ID}
-          projectId={PROJECT_ID}
-          projectName="Canvas Project"
-          chatPanel={<div>Persistent Chat</div>}
-          onExitCanvasView={vi.fn()}
-        />
+        <CanvasDockPane threadId={THREAD_ID} />
       </div>,
     );
 
@@ -414,7 +391,9 @@ describe("CanvasWorkspaceView", () => {
       ).toHaveLength(1);
       expect(saveDrawing).not.toHaveBeenCalled();
 
-      await page.getByTestId("excalidraw-canvas").click();
+      document.querySelector('[data-testid="excalidraw-canvas"]')?.dispatchEvent(
+        new PointerEvent("pointerdown", { bubbles: true }),
+      );
       await expect.element(page.getByRole("button", { name: "Follow agent" })).toBeInTheDocument();
       await page.getByRole("button", { name: "Take over" }).click();
       expect(dispatchCommand).toHaveBeenCalledWith(
@@ -423,30 +402,6 @@ describe("CanvasWorkspaceView", () => {
           threadId: THREAD_ID,
         }),
       );
-
-      await page.getByRole("button", { name: "Enter full screen" }).click();
-      await expect.element(page.getByTestId("canvas-workspace")).toHaveAttribute(
-        "data-immersive",
-        "true",
-      );
-      await expect
-        .element(page.getByTestId("canvas-project-header"))
-        .not.toHaveClass("test-traffic-light-gutter");
-      await expect
-        .element(page.getByTestId("canvas-drawing-header"))
-        .toHaveClass("test-traffic-light-gutter");
-      await expect.element(page.getByText("Persistent Chat")).not.toBeVisible();
-      await page.getByRole("button", { name: "Exit full screen" }).click();
-      await expect.element(page.getByTestId("canvas-workspace")).toHaveAttribute(
-        "data-immersive",
-        "false",
-      );
-      await expect
-        .element(page.getByTestId("canvas-project-header"))
-        .toHaveClass("test-traffic-light-gutter");
-      await expect
-        .element(page.getByTestId("canvas-drawing-header"))
-        .not.toHaveClass("test-traffic-light-gutter");
 
       previewListener?.({
         threadId: THREAD_ID,
@@ -523,6 +478,7 @@ describe("CanvasWorkspaceView", () => {
         ...window.nativeApi,
         canvas: {
           ...window.nativeApi?.canvas,
+          createDrawing: readDrawing,
           readDrawing,
           onAgentPreview: (listener) => {
             previewListener = listener;
@@ -536,13 +492,7 @@ describe("CanvasWorkspaceView", () => {
 
     const screen = await renderWithQueryClient(
       <div style={{ width: "1440px", height: "900px" }}>
-        <CanvasWorkspaceView
-          threadId={THREAD_ID}
-          projectId={PROJECT_ID}
-          projectName="Canvas Project"
-          chatPanel={<div>Persistent Chat</div>}
-          onExitCanvasView={vi.fn()}
-        />
+        <CanvasDockPane threadId={THREAD_ID} />
       </div>,
     );
 
@@ -652,13 +602,15 @@ describe("CanvasWorkspaceView", () => {
       scene: input.scene,
       revision: "revision-2",
     }));
+    const readDrawing = vi.fn(async () => snapshot);
     Object.defineProperty(window, "nativeApi", {
       configurable: true,
       value: {
         ...window.nativeApi,
         canvas: {
           ...window.nativeApi?.canvas,
-          readDrawing: vi.fn(async () => snapshot),
+          createDrawing: readDrawing,
+          readDrawing,
           saveDrawing,
         },
       } as NativeApi,
@@ -666,13 +618,7 @@ describe("CanvasWorkspaceView", () => {
 
     const screen = await renderWithQueryClient(
       <div style={{ width: "1440px", height: "900px" }}>
-        <CanvasWorkspaceView
-          threadId={THREAD_ID}
-          projectId={PROJECT_ID}
-          projectName="Canvas Project"
-          chatPanel={<div>Persistent Chat</div>}
-          onExitCanvasView={vi.fn()}
-        />
+        <CanvasDockPane threadId={THREAD_ID} />
       </div>,
     );
 
@@ -709,6 +655,7 @@ describe("CanvasWorkspaceView", () => {
         ...window.nativeApi,
         canvas: {
           ...window.nativeApi?.canvas,
+          createDrawing: readDrawing,
           readDrawing,
           saveDrawing,
         },
@@ -717,13 +664,7 @@ describe("CanvasWorkspaceView", () => {
 
     const screen = await renderWithQueryClient(
       <div style={{ width: "1440px", height: "900px" }}>
-        <CanvasWorkspaceView
-          threadId={THREAD_ID}
-          projectId={PROJECT_ID}
-          projectName="Canvas Project"
-          chatPanel={<div>Persistent Chat</div>}
-          onExitCanvasView={vi.fn()}
-        />
+        <CanvasDockPane threadId={THREAD_ID} />
       </div>,
     );
 
@@ -770,6 +711,7 @@ describe("CanvasWorkspaceView", () => {
         ...window.nativeApi,
         canvas: {
           ...window.nativeApi?.canvas,
+          createDrawing: readDrawing,
           readDrawing,
           saveDrawing,
           onDrawingChanged: (listener) => {
@@ -784,13 +726,7 @@ describe("CanvasWorkspaceView", () => {
 
     const screen = await renderWithQueryClient(
       <div style={{ width: "1440px", height: "900px" }}>
-        <CanvasWorkspaceView
-          threadId={THREAD_ID}
-          projectId={PROJECT_ID}
-          projectName="Canvas Project"
-          chatPanel={<div>Persistent Chat</div>}
-          onExitCanvasView={vi.fn()}
-        />
+        <CanvasDockPane threadId={THREAD_ID} />
       </div>,
     );
 
