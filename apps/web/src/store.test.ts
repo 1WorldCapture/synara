@@ -281,6 +281,18 @@ function makeReadModelProject(
 }
 
 describe("store pure functions", () => {
+  it("keeps surface-free read-model threads surface-free", () => {
+    const next = syncServerReadModel(
+      makeState(makeThread()),
+      makeReadModel(makeReadModelThread({})),
+    );
+
+    expect(Object.hasOwn(next.threads[0] ?? {}, "surface")).toBe(false);
+    expect(Object.hasOwn(next.threadShellById?.[ThreadId.makeUnsafe("thread-1")] ?? {}, "surface"))
+      .toBe(false);
+    expect(Object.hasOwn(next.sidebarThreadSummaryById["thread-1"] ?? {}, "surface")).toBe(false);
+  });
+
   it("markThreadUnread moves lastVisitedAt before completion for a completed thread", () => {
     const latestTurnCompletedAt = "2026-02-25T12:30:00.000Z";
     const initialState = makeState(

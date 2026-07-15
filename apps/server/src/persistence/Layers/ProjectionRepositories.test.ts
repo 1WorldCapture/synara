@@ -80,7 +80,6 @@ projectionRepositoriesLayer("Projection repositories", (it) => {
       yield* threads.upsert({
         threadId: ThreadId.makeUnsafe("thread-null-options"),
         projectId: ProjectId.makeUnsafe("project-null-options"),
-        surface: "canvas",
         title: "Null options thread",
         modelSelection: {
           provider: "claudeAgent",
@@ -137,7 +136,6 @@ projectionRepositoriesLayer("Projection repositories", (it) => {
         provider: "claudeAgent",
         model: "claude-opus-4-6",
       });
-      assert.strictEqual(Option.getOrNull(persisted)?.surface, "canvas");
     }),
   );
 

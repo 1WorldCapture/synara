@@ -480,6 +480,7 @@ it.effect("decodes thread.created runtime mode for historical events", () =>
     const parsed = yield* decodeThreadCreatedPayload({
       threadId: "thread-1",
       projectId: "project-1",
+      surface: "chat",
       title: "Thread title",
       modelSelection: {
         provider: "codex",
@@ -493,7 +494,7 @@ it.effect("decodes thread.created runtime mode for historical events", () =>
     });
 
     assert.strictEqual(parsed.runtimeMode, DEFAULT_RUNTIME_MODE);
-    assert.strictEqual(parsed.surface, "chat");
+    assert.strictEqual(Object.hasOwn(parsed, "surface"), false);
     assert.strictEqual(parsed.modelSelection.provider, "codex");
   }),
 );

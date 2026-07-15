@@ -50,7 +50,6 @@ const makeProjectionThreadRepository = Effect.gen(function* () {
         INSERT INTO projection_threads (
           thread_id,
           project_id,
-          surface,
           title,
           model_selection_json,
           runtime_mode,
@@ -87,7 +86,6 @@ const makeProjectionThreadRepository = Effect.gen(function* () {
         VALUES (
           ${row.threadId},
           ${row.projectId},
-          ${row.surface},
           ${row.title},
           ${JSON.stringify(row.modelSelection)},
           ${row.runtimeMode},
@@ -124,7 +122,6 @@ const makeProjectionThreadRepository = Effect.gen(function* () {
         ON CONFLICT (thread_id)
         DO UPDATE SET
           project_id = excluded.project_id,
-          surface = excluded.surface,
           title = excluded.title,
           model_selection_json = excluded.model_selection_json,
           runtime_mode = excluded.runtime_mode,
@@ -168,7 +165,6 @@ const makeProjectionThreadRepository = Effect.gen(function* () {
         SELECT
           thread_id AS "threadId",
           project_id AS "projectId",
-          surface,
           title,
           model_selection_json AS "modelSelection",
           runtime_mode AS "runtimeMode",
@@ -214,7 +210,6 @@ const makeProjectionThreadRepository = Effect.gen(function* () {
         SELECT
           thread_id AS "threadId",
           project_id AS "projectId",
-          surface,
           title,
           model_selection_json AS "modelSelection",
           runtime_mode AS "runtimeMode",
