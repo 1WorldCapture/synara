@@ -20,7 +20,7 @@
     "./package.json": "./package.json"
   },
   "scripts": {
-    "build": "tsdown src/main.ts src/server.ts src/bridge.ts --format esm --clean",
+    "build": "tsdown",
     "test": "vitest run",
     "typecheck": "tsc --noEmit"
   },
