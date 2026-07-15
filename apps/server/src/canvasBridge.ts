@@ -5,16 +5,16 @@ import {
   CanvasAgentPreviewEvent,
   type CanvasAgentPreviewEvent as CanvasAgentPreviewEventType,
   type CanvasDrawingChangedEvent,
-  type CanvasDrawingRef,
 } from "@synara/contracts";
 import { MAX_CANVAS_SCENE_BYTES } from "@synara/shared/excalidrawScene";
 import { Schema } from "effect";
 
 import {
   CanvasDrawingConflictError,
-  readCanvasDrawing,
+  createCanvasDrawing,
   saveCanvasDrawing,
 } from "./canvasDrawingFiles";
+import type { CanvasDrawingRef } from "./canvasDrawingStorage";
 
 const CAPABILITY_TTL_MS = 12 * 60 * 60 * 1_000;
 const MAX_CAPABILITIES = 256;
@@ -305,9 +305,7 @@ export function authorizeCanvasBridgeCapability(
   if (left.byteLength !== right.byteLength || !timingSafeEqual(left, right)) return null;
   grant.expiresAt = now + CAPABILITY_TTL_MS;
   return {
-    cwd: grant.cwd,
-    ...(grant.directorySegments ? { directorySegments: grant.directorySegments } : {}),
-    ...(grant.legacyCwd ? { legacyCwd: grant.legacyCwd } : {}),
+    root: grant.root,
     threadId: grant.threadId,
   };
 }
@@ -393,7 +391,7 @@ export function startCanvasBridgeServer(options?: {
         }
 
         if (request.url === "/internal/canvas/read") {
-          sendJson(response, 200, await readCanvasDrawing(drawing));
+          sendJson(response, 200, await createCanvasDrawing(drawing));
           return;
         }
         if (request.url === "/internal/canvas/save") {

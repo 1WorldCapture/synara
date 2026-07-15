@@ -4,7 +4,6 @@ import {
   CanvasAgentPreviewEvent,
   CanvasDrawingChangedEvent,
   CanvasDrawingCreateInput,
-  CanvasDrawingDeleteInput,
   CanvasDrawingReadInput,
   CanvasDrawingSaveInput,
 } from "./canvas";
@@ -140,7 +139,6 @@ export const WS_METHODS = {
   canvasCreateDrawing: "canvas.createDrawing",
   canvasReadDrawing: "canvas.readDrawing",
   canvasSaveDrawing: "canvas.saveDrawing",
-  canvasDeleteDrawing: "canvas.deleteDrawing",
   subscribeCanvasDrawingChanges: "canvas.subscribeDrawingChanges",
   subscribeCanvasAgentPreviews: "canvas.subscribeAgentPreviews",
   projectsRunDevServer: "projects.runDevServer",
@@ -311,7 +309,6 @@ const WebSocketRequestBody = Schema.Union([
   tagRequestBody(WS_METHODS.canvasCreateDrawing, CanvasDrawingCreateInput),
   tagRequestBody(WS_METHODS.canvasReadDrawing, CanvasDrawingReadInput),
   tagRequestBody(WS_METHODS.canvasSaveDrawing, CanvasDrawingSaveInput),
-  tagRequestBody(WS_METHODS.canvasDeleteDrawing, CanvasDrawingDeleteInput),
   tagRequestBody(WS_METHODS.subscribeCanvasDrawingChanges, Schema.Struct({})),
   tagRequestBody(WS_METHODS.subscribeCanvasAgentPreviews, Schema.Struct({})),
   tagRequestBody(WS_METHODS.projectsRunDevServer, ProjectRunDevServerInput),

@@ -4,6 +4,10 @@ import { Effect, Schema } from "effect";
 import { ORCHESTRATION_WS_CHANNELS, ORCHESTRATION_WS_METHODS } from "./orchestration";
 import { WebSocketRequest, WsResponse, WS_CHANNELS, WS_METHODS } from "./ws";
 
+it("does not expose an independent Canvas Drawing delete method", () => {
+  assert.strictEqual("canvasDeleteDrawing" in WS_METHODS, false);
+});
+
 const decode = <S extends Schema.Top>(
   schema: S,
   input: unknown,

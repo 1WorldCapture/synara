@@ -48,7 +48,7 @@ describe("WS RPC contracts", () => {
     expect(WsRpcGroup.requests.get(WS_METHODS.canvasCreateDrawing)).toBe(WsCanvasCreateDrawingRpc);
     expect(WsRpcGroup.requests.get(WS_METHODS.canvasReadDrawing)).toBeDefined();
     expect(WsRpcGroup.requests.get(WS_METHODS.canvasSaveDrawing)).toBeDefined();
-    expect(WsRpcGroup.requests.get(WS_METHODS.canvasDeleteDrawing)).toBeDefined();
+    expect("canvasDeleteDrawing" in WS_METHODS).toBe(false);
     expect(WsRpcGroup.requests.get(WS_METHODS.subscribeCanvasDrawingChanges)).toBe(
       WsSubscribeCanvasDrawingChangesRpc,
     );

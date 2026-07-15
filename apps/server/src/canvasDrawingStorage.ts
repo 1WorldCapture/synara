@@ -1,31 +1,20 @@
 // FILE: canvasDrawingStorage.ts
-// Purpose: Resolves the durable storage location for a Canvas thread without coupling callers
-//          to whether its project is a managed Studio container or an external workspace.
+// Purpose: Resolves the durable, server-managed storage root for a conversation-owned Drawing.
 // Layer: Server Canvas storage policy
 
-import type {
-  CanvasDrawingRef,
-  OrchestrationProjectShell,
-  ThreadId,
-} from "@synara/contracts";
+import type { ThreadId } from "@synara/contracts";
+
+export interface CanvasDrawingRef {
+  readonly root: string;
+  readonly threadId: ThreadId;
+}
 
 export function resolveCanvasDrawingRef(input: {
   readonly stateDir: string;
-  readonly project: Pick<OrchestrationProjectShell, "id" | "kind" | "workspaceRoot">;
   readonly threadId: ThreadId;
 }): CanvasDrawingRef {
-  if (input.project.kind === "studio") {
-    return {
-      cwd: input.project.workspaceRoot,
-      directorySegments: ["drawings"],
-      threadId: input.threadId,
-    };
-  }
-
   return {
-    cwd: input.stateDir,
-    directorySegments: ["drawings", input.project.id],
-    legacyCwd: input.project.workspaceRoot,
+    root: input.stateDir,
     threadId: input.threadId,
   };
 }

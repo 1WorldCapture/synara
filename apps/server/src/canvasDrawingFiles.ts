@@ -10,12 +10,7 @@ import {
 } from "node:fs/promises";
 import path from "node:path";
 
-import type {
-  CanvasDrawingDeleteResult,
-  CanvasDrawingRef,
-  CanvasDrawingSaveInput,
-  CanvasDrawingSnapshot,
-} from "@synara/contracts";
+import type { CanvasDrawingSaveInput, CanvasDrawingSnapshot } from "@synara/contracts";
 import {
   EMPTY_CANVAS_SCENE,
   InvalidCanvasSceneError,
@@ -24,8 +19,10 @@ import {
   serializeCanvasScene,
 } from "@synara/shared/excalidrawScene";
 
+import type { CanvasDrawingRef } from "./canvasDrawingStorage";
+
 const SAFE_CANVAS_THREAD_ID = /^[A-Za-z0-9._:-]+$/;
-const DEFAULT_DRAWING_DIRECTORY_SEGMENTS = ["drawings"] as const;
+const DRAWING_DIRECTORY_SEGMENTS = ["drawings"] as const;
 const drawingMutationTails = new Map<string, Promise<void>>();
 
 type CanvasDrawingFileSaveInput = CanvasDrawingSaveInput & CanvasDrawingRef;
@@ -52,7 +49,7 @@ async function withDrawingMutation<A>(
   input: CanvasDrawingRef,
   operation: () => Promise<A>,
 ): Promise<A> {
-  const key = `${input.cwd}\0${drawingDirectorySegments(input).join("/")}\0${input.threadId}`;
+  const key = `${input.root}\0${input.threadId}`;
   const previous = drawingMutationTails.get(key) ?? Promise.resolve();
   let release!: () => void;
   const gate = new Promise<void>((resolve) => {
@@ -76,23 +73,15 @@ function isWithin(root: string, candidate: string): boolean {
   return relative === "" || (!relative.startsWith(`..${path.sep}`) && relative !== "..");
 }
 
-function drawingDirectorySegments(input: CanvasDrawingRef): readonly string[] {
-  const segments = input.directorySegments ?? DEFAULT_DRAWING_DIRECTORY_SEGMENTS;
-  if (segments.length === 0) {
-    throw new CanvasDrawingPathError("Canvas drawing directory cannot be empty.");
-  }
-  return segments;
-}
-
 async function safeDirectory(
-  cwd: string,
+  managedRoot: string,
   segments: readonly string[],
   options?: { readonly createMissing?: boolean },
 ): Promise<{
   readonly root: string;
   readonly directory: string;
 }> {
-  const root = await realpath(cwd);
+  const root = await realpath(managedRoot);
   let directory = root;
   for (const segment of segments) {
     if (
@@ -121,7 +110,7 @@ async function safeDirectory(
     }
     directory = await realpath(candidate);
     if (!isWithin(root, directory)) {
-      throw new CanvasDrawingPathError("Canvas directory resolves outside the project.");
+      throw new CanvasDrawingPathError("Canvas directory resolves outside the managed state root.");
     }
   }
   return { root, directory };
@@ -143,7 +132,7 @@ async function drawingPath(
   readonly size: number | null;
 }> {
   assertSafeThreadId(input.threadId);
-  const { root, directory } = await safeDirectory(input.cwd, drawingDirectorySegments(input), {
+  const { root, directory } = await safeDirectory(input.root, DRAWING_DIRECTORY_SEGMENTS, {
     createMissing: options?.createDirectories !== false,
   });
   const fileName = `${input.threadId}.excalidraw`;
@@ -171,34 +160,6 @@ async function atomicWrite(filePath: string, contents: string): Promise<void> {
   }
 }
 
-async function importLegacyDrawingIfPresent(
-  input: CanvasDrawingRef,
-  destinationPath: string,
-): Promise<boolean> {
-  if (!input.legacyCwd || input.legacyCwd === input.cwd) return false;
-  const legacyInput: CanvasDrawingRef = {
-    cwd: input.legacyCwd,
-    directorySegments: DEFAULT_DRAWING_DIRECTORY_SEGMENTS,
-    threadId: input.threadId,
-  };
-  const legacy = await drawingPath(legacyInput, { createDirectories: false }).catch(
-    (cause: NodeJS.ErrnoException) => {
-      if (cause.code === "ENOENT") return null;
-      throw cause;
-    },
-  );
-  if (!legacy) return false;
-  if (legacy.size !== null && legacy.size > MAX_CANVAS_SCENE_BYTES) {
-    throw new InvalidCanvasSceneError(
-      `Canvas scene exceeds the ${MAX_CANVAS_SCENE_BYTES} byte limit.`,
-    );
-  }
-  const contents = await readFile(legacy.filePath, "utf8");
-  parseCanvasScene(contents);
-  await atomicWrite(destinationPath, contents);
-  return true;
-}
-
 async function snapshotFromFile(input: CanvasDrawingRef): Promise<CanvasDrawingSnapshot> {
   const resolved = await drawingPath(input);
   if (resolved.size !== null && resolved.size > MAX_CANVAS_SCENE_BYTES) {
@@ -206,15 +167,7 @@ async function snapshotFromFile(input: CanvasDrawingRef): Promise<CanvasDrawingS
       `Canvas scene exceeds the ${MAX_CANVAS_SCENE_BYTES} byte limit.`,
     );
   }
-  let contents: string;
-  try {
-    contents = await readFile(resolved.filePath, "utf8");
-  } catch (cause) {
-    if ((cause as NodeJS.ErrnoException | null)?.code !== "ENOENT") throw cause;
-    const imported = await importLegacyDrawingIfPresent(input, resolved.filePath);
-    if (!imported) throw cause;
-    contents = await readFile(resolved.filePath, "utf8");
-  }
+  const contents = await readFile(resolved.filePath, "utf8");
   return {
     relativePath: resolved.relativePath,
     scene: parseCanvasScene(contents),
@@ -251,9 +204,6 @@ export async function saveCanvasDrawing(
         `Canvas scene exceeds the ${MAX_CANVAS_SCENE_BYTES} byte limit.`,
       );
     }
-    if (resolved.size === null) {
-      await importLegacyDrawingIfPresent(input, resolved.filePath);
-    }
     const current = await readFile(resolved.filePath, "utf8");
     const currentRevision = revisionOf(current);
     if (currentRevision !== input.expectedRevision) {
@@ -266,51 +216,22 @@ export async function saveCanvasDrawing(
   });
 }
 
-export async function deleteCanvasDrawing(
-  input: CanvasDrawingRef,
-): Promise<CanvasDrawingDeleteResult> {
-  const trashed = await trashCanvasDrawing(input);
-  return { deleted: trashed !== null };
-}
-
-export interface TrashedCanvasDrawing {
-  readonly originalPath: string;
-  readonly trashPath: string;
-}
-
-export async function trashCanvasDrawing(
-  input: CanvasDrawingRef,
-): Promise<TrashedCanvasDrawing | null> {
+export async function hardDeleteCanvasDrawing(input: CanvasDrawingRef): Promise<boolean> {
   return withDrawingMutation(input, async () => {
-    const resolved = await drawingPath(input);
-    let stat = await lstat(resolved.filePath).catch((cause: NodeJS.ErrnoException) => {
-      if (cause.code === "ENOENT") return null;
-      throw cause;
-    });
-    if (!stat && (await importLegacyDrawingIfPresent(input, resolved.filePath))) {
-      stat = await lstat(resolved.filePath);
-    }
-    if (!stat) return null;
-    if (stat.isSymbolicLink()) {
-      throw new CanvasDrawingPathError("Drawing files cannot be symbolic links.");
-    }
-    const { directory: trashDirectory } = await safeDirectory(input.cwd, [
-      ".synara",
-      "trash",
-      ...drawingDirectorySegments(input),
-    ]);
-    const trashPath = path.join(
-      trashDirectory,
-      `${input.threadId}.${new Date().toISOString().replaceAll(":", "-")}.excalidraw`,
+    const resolved = await drawingPath(input, { createDirectories: false }).catch(
+      (cause: NodeJS.ErrnoException) => {
+        if (cause.code === "ENOENT") return null;
+        throw cause;
+      },
     );
-    await rename(resolved.filePath, trashPath);
-    return { originalPath: resolved.filePath, trashPath };
+    if (!resolved) return false;
+    if (resolved.size === null) return false;
+    return rm(resolved.filePath).then(
+      () => true,
+      (cause: NodeJS.ErrnoException) => {
+        if (cause.code === "ENOENT") return false;
+        throw cause;
+      },
+    );
   });
-}
-
-export async function restoreTrashedCanvasDrawing(
-  trashed: TrashedCanvasDrawing | null,
-): Promise<void> {
-  if (!trashed) return;
-  await rename(trashed.trashPath, trashed.originalPath);
 }

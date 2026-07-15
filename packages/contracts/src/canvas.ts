@@ -12,14 +12,6 @@ export const CanvasScene = Schema.Struct({
 });
 export type CanvasScene = typeof CanvasScene.Type;
 
-export const CanvasDrawingRef = Schema.Struct({
-  cwd: TrimmedNonEmptyString,
-  directorySegments: Schema.optional(Schema.Array(TrimmedNonEmptyString)),
-  legacyCwd: Schema.optional(TrimmedNonEmptyString),
-  threadId: ThreadId,
-});
-export type CanvasDrawingRef = typeof CanvasDrawingRef.Type;
-
 const CanvasDrawingTarget = Schema.Struct({ threadId: ThreadId });
 
 export const CanvasDrawingCreateInput = CanvasDrawingTarget;
@@ -34,9 +26,6 @@ export const CanvasDrawingSaveInput = Schema.Struct({
   expectedRevision: TrimmedNonEmptyString,
 });
 export type CanvasDrawingSaveInput = typeof CanvasDrawingSaveInput.Type;
-
-export const CanvasDrawingDeleteInput = CanvasDrawingTarget;
-export type CanvasDrawingDeleteInput = typeof CanvasDrawingDeleteInput.Type;
 
 export const CanvasDrawingChangedEvent = Schema.Struct({
   threadId: ThreadId,
@@ -68,8 +57,4 @@ export interface CanvasDrawingSnapshot {
   readonly relativePath: string;
   readonly scene: CanvasScene;
   readonly revision: string;
-}
-
-export interface CanvasDrawingDeleteResult {
-  readonly deleted: boolean;
 }

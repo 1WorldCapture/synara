@@ -507,7 +507,6 @@ export function createWsNativeApi(): NativeApi {
       createDrawing: (input) => transport.request(WS_METHODS.canvasCreateDrawing, input),
       readDrawing: (input) => transport.request(WS_METHODS.canvasReadDrawing, input),
       saveDrawing: (input) => transport.request(WS_METHODS.canvasSaveDrawing, input),
-      deleteDrawing: (input) => transport.request(WS_METHODS.canvasDeleteDrawing, input),
       onDrawingChanged: canvasDrawingChangedListeners.subscribe,
       onAgentPreview: (callback) => {
         const unsubscribe = canvasAgentPreviewListeners.subscribe(callback);

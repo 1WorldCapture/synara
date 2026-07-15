@@ -1,4 +1,4 @@
-import { mkdtemp, rm } from "node:fs/promises";
+import { access, mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
 
@@ -27,32 +27,29 @@ beforeEach(resetCanvasBridgeCapabilitiesForTest);
 describe("canvas bridge capabilities", () => {
   it("binds a high-entropy token to one drawing", () => {
     const grant = issueCanvasBridgeCapability({
-      cwd: "/state",
-      directorySegments: ["drawings", "project-1"],
-      legacyCwd: "/project",
+      root: "/state",
       threadId: "drawing-1",
     });
     expect(grant.token.length).toBeGreaterThan(32);
     expect(authorizeCanvasBridgeCapability(grant.token, "drawing-1")).toEqual({
-      cwd: "/state",
-      directorySegments: ["drawings", "project-1"],
-      legacyCwd: "/project",
+      root: "/state",
       threadId: "drawing-1",
     });
     expect(authorizeCanvasBridgeCapability(grant.token, "drawing-2")).toBeNull();
   });
 
   it("rejects a revoked capability", () => {
-    const grant = issueCanvasBridgeCapability({ cwd: "/project", threadId: "drawing-1" });
+    const grant = issueCanvasBridgeCapability({ root: "/state", threadId: "drawing-1" });
     revokeCanvasBridgeCapability(grant.token);
     expect(authorizeCanvasBridgeCapability(grant.token, "drawing-1")).toBeNull();
   });
 
   it("serves capability-scoped drawings on an independent loopback listener", async () => {
-    const cwd = await mkdtemp(path.join(tmpdir(), "synara-canvas-bridge-"));
-    roots.push(cwd);
-    const snapshot = await createCanvasDrawing({ cwd, threadId: "drawing-loopback" });
-    const grant = issueCanvasBridgeCapability({ cwd, threadId: "drawing-loopback" });
+    const root = await mkdtemp(path.join(tmpdir(), "synara-canvas-bridge-"));
+    roots.push(root);
+    const drawingPath = path.join(root, "drawings", "drawing-loopback.excalidraw");
+    await expect(access(drawingPath)).rejects.toMatchObject({ code: "ENOENT" });
+    const grant = issueCanvasBridgeCapability({ root, threadId: "drawing-loopback" });
     const diagnostics: Array<{ stage: string; reason?: string; sequence?: number }> = [];
     const server = await startCanvasBridgeServer({
       onDiagnostic: (event) => diagnostics.push(event),
@@ -62,19 +59,24 @@ describe("canvas bridge capabilities", () => {
     const unsubscribe = subscribeCanvasDrawingChanges((event) => drawingChanges.push(event));
     const unsubscribePreviews = subscribeCanvasAgentPreviews((event) => previews.push(event));
     try {
-      const response = await fetch(`${server.baseUrl}/internal/canvas/read`, {
-        method: "POST",
-        headers: {
-          authorization: `Bearer ${grant.token}`,
-          "content-type": "application/json",
-        },
-        body: JSON.stringify({ threadId: "drawing-loopback" }),
-      });
+      const [response, uiSnapshot] = await Promise.all([
+        fetch(`${server.baseUrl}/internal/canvas/read`, {
+          method: "POST",
+          headers: {
+            authorization: `Bearer ${grant.token}`,
+            "content-type": "application/json",
+          },
+          body: JSON.stringify({ threadId: "drawing-loopback" }),
+        }),
+        createCanvasDrawing({ root, threadId: "drawing-loopback" }),
+      ]);
       expect(response.status).toBe(200);
-      expect(await response.json()).toMatchObject({
-        revision: snapshot.revision,
+      const snapshot = (await response.json()) as { revision: string; scene: unknown };
+      expect(snapshot).toEqual(uiSnapshot);
+      expect(snapshot).toMatchObject({
         scene: EMPTY_CANVAS_SCENE,
       });
+      await expect(access(drawingPath)).resolves.toBeUndefined();
 
       const saveResponse = await fetch(`${server.baseUrl}/internal/canvas/save`, {
         method: "POST",

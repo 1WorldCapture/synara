@@ -2,10 +2,15 @@ import { assert, describe, it } from "@effect/vitest";
 import { Effect, Exit, Schema } from "effect";
 import * as Rpc from "effect/unstable/rpc/Rpc";
 
+import * as CanvasContracts from "./canvas";
 import { CanvasAgentPreviewEvent } from "./canvas";
 import { WsCanvasReadDrawingRpc } from "./rpc";
 
 describe("Canvas RPC contracts", () => {
+  it("does not expose an independent Drawing delete contract", () => {
+    assert.strictEqual("CanvasDrawingDeleteInput" in CanvasContracts, false);
+  });
+
   it.effect("preserves scene JSON values through the RPC JSON codec", () =>
     Effect.gen(function* () {
       const codec = Schema.toCodecJson(Rpc.exitSchema(WsCanvasReadDrawingRpc));

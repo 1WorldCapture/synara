@@ -55,9 +55,7 @@ import {
 import {
   createCanvasDrawing,
   readCanvasDrawing,
-  restoreTrashedCanvasDrawing,
   saveCanvasDrawing,
-  trashCanvasDrawing,
 } from "./canvasDrawingFiles";
 import { resolveCanvasDrawingRef } from "./canvasDrawingStorage";
 import {
@@ -620,22 +618,15 @@ const makeWsRpcHandlersLayer = () =>
           const thread = Option.getOrUndefined(
             yield* projectionReadModelQuery.getThreadShellById(input.threadId),
           );
-          if (!thread || thread.surface !== "canvas") {
+          if (!thread) {
             return yield* Effect.fail(
-              new Error("Canvas drawing access requires an active Canvas thread."),
+              new Error("Canvas drawing access requires an existing parent conversation."),
             );
-          }
-          const project = Option.getOrUndefined(
-            yield* projectionReadModelQuery.getProjectShellById(thread.projectId),
-          );
-          if (!project) {
-            return yield* Effect.fail(new Error("The Canvas thread project is unavailable."));
           }
           return {
             ...input,
             ...resolveCanvasDrawingRef({
               stateDir: config.stateDir,
-              project,
               threadId: input.threadId,
             }),
           };
@@ -887,35 +878,6 @@ const makeWsRpcHandlersLayer = () =>
               Effect.flatMap((resolved) => Effect.tryPromise(() => saveCanvasDrawing(resolved))),
             ),
             "Failed to save canvas drawing",
-          ),
-        [WS_METHODS.canvasDeleteDrawing]: (input) =>
-          rpcEffect(
-            resolveCanvasDrawingInput(input).pipe(
-              Effect.flatMap((resolved) =>
-                Effect.gen(function* () {
-                  const trashed = yield* Effect.tryPromise(() => trashCanvasDrawing(resolved));
-                  yield* runtimeStartup
-                    .enqueueCommand(
-                      orchestrationEngine.dispatch({
-                        type: "thread.delete",
-                        commandId: CommandId.makeUnsafe(
-                          `server:canvas-delete:${crypto.randomUUID()}`,
-                        ),
-                        threadId: resolved.threadId,
-                      }),
-                    )
-                    .pipe(
-                      Effect.onError(() =>
-                        Effect.tryPromise(() => restoreTrashedCanvasDrawing(trashed)).pipe(
-                          Effect.catch(() => Effect.void),
-                        ),
-                      ),
-                    );
-                  return { deleted: trashed !== null };
-                }),
-              ),
-            ),
-            "Failed to delete canvas drawing",
           ),
         [WS_METHODS.subscribeCanvasDrawingChanges]: () =>
           Stream.callback((queue) =>

@@ -22,7 +22,6 @@ import {
   CanvasAgentPreviewEvent,
   CanvasDrawingChangedEvent,
   CanvasDrawingCreateInput,
-  CanvasDrawingDeleteInput,
   CanvasDrawingReadInput,
   CanvasDrawingSaveInput,
   CanvasScene,
@@ -395,10 +394,6 @@ const CanvasDrawingSnapshotSchema = Schema.Struct({
   revision: Schema.String,
 });
 
-const CanvasDrawingDeleteResultSchema = Schema.Struct({
-  deleted: Schema.Boolean,
-});
-
 export const WsCanvasCreateDrawingRpc = Rpc.make(WS_METHODS.canvasCreateDrawing, {
   payload: CanvasDrawingCreateInput,
   success: CanvasDrawingSnapshotSchema,
@@ -414,12 +409,6 @@ export const WsCanvasReadDrawingRpc = Rpc.make(WS_METHODS.canvasReadDrawing, {
 export const WsCanvasSaveDrawingRpc = Rpc.make(WS_METHODS.canvasSaveDrawing, {
   payload: CanvasDrawingSaveInput,
   success: CanvasDrawingSnapshotSchema,
-  error: WsRpcError,
-});
-
-export const WsCanvasDeleteDrawingRpc = Rpc.make(WS_METHODS.canvasDeleteDrawing, {
-  payload: CanvasDrawingDeleteInput,
-  success: CanvasDrawingDeleteResultSchema,
   error: WsRpcError,
 });
 
@@ -996,7 +985,6 @@ export const WsFeatureRpcGroup = RpcGroup.make(
   WsCanvasCreateDrawingRpc,
   WsCanvasReadDrawingRpc,
   WsCanvasSaveDrawingRpc,
-  WsCanvasDeleteDrawingRpc,
   WsSubscribeCanvasDrawingChangesRpc,
   WsSubscribeCanvasAgentPreviewsRpc,
   WsSubscribeProjectDevServerEventsRpc,

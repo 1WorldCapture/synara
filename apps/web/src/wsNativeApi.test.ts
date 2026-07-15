@@ -561,7 +561,7 @@ describe("wsNativeApi", () => {
     });
   });
 
-  it("forwards Canvas operations using only the server-resolved drawing identity", async () => {
+  it("forwards Canvas operations without exposing independent Drawing deletion", async () => {
     requestMock.mockResolvedValue({});
     const { createWsNativeApi } = await import("./wsNativeApi");
     const api = createWsNativeApi();
@@ -571,13 +571,12 @@ describe("wsNativeApi", () => {
     await api.canvas.createDrawing({ threadId });
     await api.canvas.readDrawing({ threadId });
     await api.canvas.saveDrawing({ threadId, scene, expectedRevision: "revision-1" });
-    await api.canvas.deleteDrawing({ threadId });
 
-    expect(requestMock.mock.calls.slice(-4)).toEqual([
+    expect("deleteDrawing" in api.canvas).toBe(false);
+    expect(requestMock.mock.calls.slice(-3)).toEqual([
       [WS_METHODS.canvasCreateDrawing, { threadId }],
       [WS_METHODS.canvasReadDrawing, { threadId }],
       [WS_METHODS.canvasSaveDrawing, { threadId, scene, expectedRevision: "revision-1" }],
-      [WS_METHODS.canvasDeleteDrawing, { threadId }],
     ]);
   });
 
