@@ -292,6 +292,16 @@ export function revokeCanvasBridgeCapability(token: string): void {
   grants.delete(tokenKey(token));
 }
 
+export function revokeCanvasBridgeCapabilitiesForThread(threadId: string): number {
+  let revoked = 0;
+  for (const [token, grant] of grants) {
+    if (grant.threadId !== threadId) continue;
+    grants.delete(token);
+    revoked += 1;
+  }
+  return revoked;
+}
+
 export function authorizeCanvasBridgeCapability(
   token: string,
   threadId: string,

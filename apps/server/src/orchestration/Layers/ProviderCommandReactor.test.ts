@@ -13,7 +13,6 @@ import type {
   ProviderForkThreadResult,
   ProviderRuntimeEvent,
   ProviderSession,
-  ThreadSurface,
 } from "@synara/contracts";
 import {
   ApprovalRequestId,
@@ -67,6 +66,7 @@ import { attachmentRelativePath } from "../../attachmentStore.ts";
 import { resolveProviderAttachmentPath } from "../../provider/providerAttachmentPaths.ts";
 import { ServerSettingsService } from "../../serverSettings.ts";
 import { checkpointRefForThreadTurn } from "../../checkpointing/Utils.ts";
+import { authorizeCanvasBridgeCapability } from "../../canvasBridge.ts";
 import {
   CheckpointStore,
   type CheckpointStoreShape,
@@ -133,7 +133,6 @@ describe("ProviderCommandReactor", () => {
   async function createHarness(input?: {
     readonly baseDir?: string;
     readonly threadModelSelection?: ModelSelection;
-    readonly threadSurface?: ThreadSurface;
     readonly sessionModelSwitch?: "unsupported" | "in-session" | "restart-session";
     readonly conversationRollback?: "native" | "restart-session";
     readonly checkpointStore?: Partial<CheckpointStoreShape>;
@@ -482,7 +481,6 @@ describe("ProviderCommandReactor", () => {
         commandId: CommandId.makeUnsafe("cmd-thread-create"),
         threadId: ThreadId.makeUnsafe("thread-1"),
         projectId: asProjectId("project-1"),
-        surface: input?.threadSurface ?? "chat",
         title: "Thread",
         modelSelection: modelSelection,
         interactionMode: DEFAULT_PROVIDER_INTERACTION_MODE,
@@ -1297,20 +1295,33 @@ describe("ProviderCommandReactor", () => {
     });
   });
 
-  it("provides the Canvas MCP runtime to non-Grok provider sessions", async () => {
+  it("keeps a text-only conversation file-free when the thread is created", async () => {
+    const harness = await createHarness();
+    await harness.drain();
+    expect(fs.existsSync(path.join(harness.stateDir, "drawings", "thread-1.excalidraw"))).toBe(
+      false,
+    );
+  });
+
+  it.each([
+    ["codex", "gpt-5-codex"],
+    ["claudeAgent", "claude-opus-4-8"],
+    ["cursor", "cursor-auto"],
+    ["grok", "grok-4"],
+    ["droid", "droid-auto"],
+  ] as const)("provides the Canvas MCP runtime to ordinary %s sessions", async (provider, model) => {
     const harness = await createHarness({
-      threadSurface: "canvas",
-      threadModelSelection: { provider: "claudeAgent", model: "claude-opus-4-8" },
+      threadModelSelection: { provider, model } as ModelSelection,
     });
     const now = new Date().toISOString();
 
     await Effect.runPromise(
       harness.engine.dispatch({
         type: "thread.turn.start",
-        commandId: CommandId.makeUnsafe("cmd-canvas-claude-turn-start"),
+        commandId: CommandId.makeUnsafe(`cmd-canvas-${provider}-turn-start`),
         threadId: ThreadId.makeUnsafe("thread-1"),
         message: {
-          messageId: asMessageId("canvas-claude-user"),
+          messageId: asMessageId(`canvas-${provider}-user`),
           role: "user",
           text: "Draw a release flow",
           attachments: [],
@@ -1323,7 +1334,7 @@ describe("ProviderCommandReactor", () => {
 
     await waitFor(() => harness.startSession.mock.calls.length === 1);
     expect(harness.startSession.mock.calls[0]?.[1]).toMatchObject({
-      provider: "claudeAgent",
+      provider,
       canvas: {
         threadId: "thread-1",
         bridgeUrl: expect.any(String),
@@ -1332,22 +1343,57 @@ describe("ProviderCommandReactor", () => {
         mcpArgs: [expect.any(String)],
       },
     });
+    expect(fs.existsSync(path.join(harness.stateDir, "drawings", "thread-1.excalidraw"))).toBe(
+      false,
+    );
+    await waitFor(() => harness.sendTurn.mock.calls.length === 1);
+    expect(harness.sendTurn.mock.calls[0]?.[0]).toMatchObject({ input: "Draw a release flow" });
   });
 
-  it("rejects Canvas providers that cannot host an isolated tool session", async () => {
-    const harness = await createHarness({
-      threadSurface: "canvas",
-      threadModelSelection: { provider: "pi", model: "pi-runtime-model" },
-    });
+  it.each(["antigravity", "pi", "opencode", "kilo"] as const)(
+    "starts ordinary %s sessions without Canvas runtime or fallback",
+    async (provider) => {
+      const harness = await createHarness({
+        threadModelSelection: { provider, model: `${provider}-runtime-model` } as ModelSelection,
+      });
+      const now = new Date().toISOString();
+
+      await Effect.runPromise(
+        harness.engine.dispatch({
+          type: "thread.turn.start",
+          commandId: CommandId.makeUnsafe(`cmd-${provider}-turn-start`),
+          threadId: ThreadId.makeUnsafe("thread-1"),
+          message: {
+            messageId: asMessageId(`${provider}-user`),
+            role: "user",
+            text: "Draw a release flow",
+            attachments: [],
+          },
+          runtimeMode: "full-access",
+          interactionMode: DEFAULT_PROVIDER_INTERACTION_MODE,
+          createdAt: now,
+        }),
+      );
+
+      await waitFor(() => harness.startSession.mock.calls.length === 1);
+      expect(harness.startSession.mock.calls[0]?.[1]).toMatchObject({ provider });
+      expect(harness.startSession.mock.calls[0]?.[1]).not.toHaveProperty("canvas");
+      await waitFor(() => harness.sendTurn.mock.calls.length === 1);
+      expect(harness.sendTurn.mock.calls[0]?.[0]).toMatchObject({ input: "Draw a release flow" });
+    },
+  );
+
+  it("creates and then reuses the parent Drawing on the first MCP read", async () => {
+    const harness = await createHarness();
     const now = new Date().toISOString();
 
     await Effect.runPromise(
       harness.engine.dispatch({
         type: "thread.turn.start",
-        commandId: CommandId.makeUnsafe("cmd-canvas-pi-turn-start"),
+        commandId: CommandId.makeUnsafe("cmd-canvas-lazy-read-turn-start"),
         threadId: ThreadId.makeUnsafe("thread-1"),
         message: {
-          messageId: asMessageId("canvas-pi-user"),
+          messageId: asMessageId("canvas-lazy-read-user"),
           role: "user",
           text: "Draw a release flow",
           attachments: [],
@@ -1358,23 +1404,146 @@ describe("ProviderCommandReactor", () => {
       }),
     );
 
-    await waitFor(async () => {
-      const readModel = await Effect.runPromise(harness.engine.getReadModel());
-      return (
-        readModel.threads[0]?.activities.some(
-          (activity) => activity.kind === "provider.turn.start.failed",
-        ) ?? false
-      );
-    });
-    expect(harness.startSession).not.toHaveBeenCalled();
-    const readModel = await Effect.runPromise(harness.engine.getReadModel());
+    await waitFor(() => harness.startSession.mock.calls.length === 1);
+    const canvas = (
+      harness.startSession.mock.calls[0]?.[1] as
+        | {
+            readonly canvas?: {
+              readonly bridgeUrl: string;
+              readonly bridgeToken: string;
+              readonly threadId: string;
+            };
+          }
+        | undefined
+    )?.canvas;
+    expect(canvas).toBeDefined();
+    if (!canvas) return;
+
+    const drawingPath = path.join(harness.stateDir, "drawings", "thread-1.excalidraw");
+    expect(fs.existsSync(drawingPath)).toBe(false);
+    const read = () =>
+      fetch(`${canvas.bridgeUrl}/internal/canvas/read`, {
+        method: "POST",
+        headers: {
+          authorization: `Bearer ${canvas.bridgeToken}`,
+          "content-type": "application/json",
+        },
+        body: JSON.stringify({ threadId: canvas.threadId }),
+      });
+
+    const firstResponse = await read();
+    expect(firstResponse.status).toBe(200);
+    const firstSnapshot = await firstResponse.json();
+    expect(fs.existsSync(drawingPath)).toBe(true);
+    const secondResponse = await read();
+    expect(secondResponse.status).toBe(200);
+    expect(await secondResponse.json()).toEqual(firstSnapshot);
+  });
+
+  it("replaces the Canvas capability on restart and revokes it on stop", async () => {
+    const harness = await createHarness();
+    const now = new Date().toISOString();
+
+    await Effect.runPromise(
+      harness.engine.dispatch({
+        type: "thread.turn.start",
+        commandId: CommandId.makeUnsafe("cmd-canvas-capability-start"),
+        threadId: ThreadId.makeUnsafe("thread-1"),
+        message: {
+          messageId: asMessageId("canvas-capability-user"),
+          role: "user",
+          text: "Inspect the drawing",
+          attachments: [],
+        },
+        runtimeMode: "full-access",
+        interactionMode: DEFAULT_PROVIDER_INTERACTION_MODE,
+        createdAt: now,
+      }),
+    );
+    await waitFor(() => harness.startSession.mock.calls.length === 1);
+    const firstCanvas = (
+      harness.startSession.mock.calls[0]?.[1] as
+        | { readonly canvas?: { readonly bridgeToken: string; readonly threadId: string } }
+        | undefined
+    )?.canvas;
+    expect(firstCanvas).toBeDefined();
+    if (!firstCanvas) return;
     expect(
-      readModel.threads[0]?.activities.find(
-        (activity) => activity.kind === "provider.turn.start.failed",
-      ),
-    ).toMatchObject({
-      payload: { detail: expect.stringContaining("isolated Canvas tool session") },
-    });
+      authorizeCanvasBridgeCapability(firstCanvas.bridgeToken, firstCanvas.threadId),
+    ).not.toBeNull();
+
+    await Effect.runPromise(
+      harness.engine.dispatch({
+        type: "thread.runtime-mode.set",
+        commandId: CommandId.makeUnsafe("cmd-canvas-capability-restart"),
+        threadId: ThreadId.makeUnsafe("thread-1"),
+        runtimeMode: "approval-required",
+        createdAt: now,
+      }),
+    );
+    await waitFor(() => harness.startSession.mock.calls.length === 2);
+    const secondCanvas = (
+      harness.startSession.mock.calls[1]?.[1] as
+        | { readonly canvas?: { readonly bridgeToken: string; readonly threadId: string } }
+        | undefined
+    )?.canvas;
+    expect(secondCanvas).toBeDefined();
+    if (!secondCanvas) return;
+    expect(secondCanvas.bridgeToken).not.toBe(firstCanvas.bridgeToken);
+    expect(
+      authorizeCanvasBridgeCapability(firstCanvas.bridgeToken, firstCanvas.threadId),
+    ).toBeNull();
+    expect(
+      authorizeCanvasBridgeCapability(secondCanvas.bridgeToken, secondCanvas.threadId),
+    ).not.toBeNull();
+
+    await Effect.runPromise(
+      harness.engine.dispatch({
+        type: "thread.session.stop",
+        commandId: CommandId.makeUnsafe("cmd-canvas-capability-stop"),
+        threadId: ThreadId.makeUnsafe("thread-1"),
+        createdAt: now,
+      }),
+    );
+    await waitFor(() => harness.stopSession.mock.calls.length === 1);
+    expect(
+      authorizeCanvasBridgeCapability(secondCanvas.bridgeToken, secondCanvas.threadId),
+    ).toBeNull();
+  });
+
+  it("revokes the issued Canvas capability when Provider startup fails", async () => {
+    const harness = await createHarness();
+    const now = new Date().toISOString();
+    harness.startSession.mockImplementationOnce(
+      () => Effect.fail(new Error("simulated Canvas startup failure")) as never,
+    );
+
+    await Effect.runPromise(
+      harness.engine.dispatch({
+        type: "thread.turn.start",
+        commandId: CommandId.makeUnsafe("cmd-canvas-capability-failed-start"),
+        threadId: ThreadId.makeUnsafe("thread-1"),
+        message: {
+          messageId: asMessageId("canvas-capability-failed-user"),
+          role: "user",
+          text: "Inspect the drawing",
+          attachments: [],
+        },
+        runtimeMode: "full-access",
+        interactionMode: DEFAULT_PROVIDER_INTERACTION_MODE,
+        createdAt: now,
+      }),
+    );
+    await waitFor(() => harness.startSession.mock.calls.length === 1);
+    await harness.drain();
+    const canvas = (
+      harness.startSession.mock.calls[0]?.[1] as
+        | { readonly canvas?: { readonly bridgeToken: string; readonly threadId: string } }
+        | undefined
+    )?.canvas;
+    expect(canvas).toBeDefined();
+    if (!canvas) return;
+    expect(authorizeCanvasBridgeCapability(canvas.bridgeToken, canvas.threadId)).toBeNull();
   });
 
   it("bootstraps sidechat context when the provider cannot fork natively", async () => {
@@ -3326,146 +3495,6 @@ describe("ProviderCommandReactor", () => {
     await waitFor(
       async () => (await readHarnessThread(harness))?.title === "Polish loading states",
     );
-  });
-
-  it("renames an untitled canvas from its first drawing request", async () => {
-    const harness = await createHarness({ threadSurface: "canvas" });
-    const now = new Date().toISOString();
-    harness.generateThreadTitle.mockImplementation(() =>
-      Effect.succeed({
-        title: "J2EE onion architecture",
-      }),
-    );
-
-    await Effect.runPromise(
-      harness.engine.dispatch({
-        type: "thread.meta.update",
-        commandId: CommandId.makeUnsafe("cmd-canvas-title-generic"),
-        threadId: ThreadId.makeUnsafe("thread-1"),
-        title: "Untitled drawing 2",
-      }),
-    );
-
-    await Effect.runPromise(
-      harness.engine.dispatch({
-        type: "thread.turn.start",
-        commandId: CommandId.makeUnsafe("cmd-turn-start-canvas-title"),
-        threadId: ThreadId.makeUnsafe("thread-1"),
-        message: {
-          messageId: asMessageId("user-message-canvas-title-1"),
-          role: "user",
-          text: "Draw the common J2EE architecture layers as an onion diagram",
-          attachments: [],
-        },
-        interactionMode: DEFAULT_PROVIDER_INTERACTION_MODE,
-        runtimeMode: "approval-required",
-        createdAt: now,
-      }),
-    );
-
-    await waitFor(() => harness.generateThreadTitle.mock.calls.length === 1);
-    await waitFor(async () => {
-      const readModel = await Effect.runPromise(harness.engine.getReadModel());
-      return (
-        readModel.threads.find((entry) => entry.id === ThreadId.makeUnsafe("thread-1"))?.title ===
-        "J2EE onion architecture"
-      );
-    });
-  });
-
-  it("preserves a canvas title manually set before its first drawing request", async () => {
-    const harness = await createHarness({ threadSurface: "canvas" });
-    const now = new Date().toISOString();
-    const manualTitle = "Draw a blue circle";
-
-    await Effect.runPromise(
-      harness.engine.dispatch({
-        type: "thread.meta.update",
-        commandId: CommandId.makeUnsafe("cmd-canvas-title-manual-before-turn"),
-        threadId: ThreadId.makeUnsafe("thread-1"),
-        title: manualTitle,
-      }),
-    );
-
-    await Effect.runPromise(
-      harness.engine.dispatch({
-        type: "thread.turn.start",
-        commandId: CommandId.makeUnsafe("cmd-turn-start-canvas-manual-title"),
-        threadId: ThreadId.makeUnsafe("thread-1"),
-        message: {
-          messageId: asMessageId("user-message-canvas-manual-title-1"),
-          role: "user",
-          text: manualTitle,
-          attachments: [],
-        },
-        interactionMode: DEFAULT_PROVIDER_INTERACTION_MODE,
-        runtimeMode: "approval-required",
-        createdAt: now,
-      }),
-    );
-
-    await harness.drain();
-    expect(harness.generateThreadTitle).not.toHaveBeenCalled();
-    const readModel = await Effect.runPromise(harness.engine.getReadModel());
-    expect(
-      readModel.threads.find((entry) => entry.id === ThreadId.makeUnsafe("thread-1"))?.title,
-    ).toBe(manualTitle);
-  });
-
-  it("preserves a canvas title manually set while title generation is in flight", async () => {
-    const harness = await createHarness({ threadSurface: "canvas" });
-    const now = new Date().toISOString();
-    let resolveGeneratedTitle!: (value: { readonly title: string }) => void;
-    const generatedTitle = new Promise<{ readonly title: string }>((resolve) => {
-      resolveGeneratedTitle = resolve;
-    });
-    harness.generateThreadTitle.mockImplementation(() =>
-      Effect.promise(() => generatedTitle),
-    );
-
-    await Effect.runPromise(
-      harness.engine.dispatch({
-        type: "thread.meta.update",
-        commandId: CommandId.makeUnsafe("cmd-canvas-title-generic-in-flight"),
-        threadId: ThreadId.makeUnsafe("thread-1"),
-        title: "Untitled drawing",
-      }),
-    );
-
-    await Effect.runPromise(
-      harness.engine.dispatch({
-        type: "thread.turn.start",
-        commandId: CommandId.makeUnsafe("cmd-turn-start-canvas-title-in-flight"),
-        threadId: ThreadId.makeUnsafe("thread-1"),
-        message: {
-          messageId: asMessageId("user-message-canvas-title-in-flight-1"),
-          role: "user",
-          text: "Draw a deployment pipeline",
-          attachments: [],
-        },
-        interactionMode: DEFAULT_PROVIDER_INTERACTION_MODE,
-        runtimeMode: "approval-required",
-        createdAt: now,
-      }),
-    );
-
-    await waitFor(() => harness.generateThreadTitle.mock.calls.length === 1);
-    const manualTitle = "Release flow";
-    await Effect.runPromise(
-      harness.engine.dispatch({
-        type: "thread.meta.update",
-        commandId: CommandId.makeUnsafe("cmd-canvas-title-manual-in-flight"),
-        threadId: ThreadId.makeUnsafe("thread-1"),
-        title: manualTitle,
-      }),
-    );
-    resolveGeneratedTitle({ title: "Deployment pipeline" });
-
-    await harness.drain();
-    const readModel = await Effect.runPromise(harness.engine.getReadModel());
-    expect(
-      readModel.threads.find((entry) => entry.id === ThreadId.makeUnsafe("thread-1"))?.title,
-    ).toBe(manualTitle);
   });
 
   it("uses the configured text generation model for providers without native title generation", async () => {

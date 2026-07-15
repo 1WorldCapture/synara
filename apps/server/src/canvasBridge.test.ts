@@ -10,6 +10,7 @@ import {
   issueCanvasBridgeCapability,
   resetCanvasBridgeCapabilitiesForTest,
   revokeCanvasBridgeCapability,
+  revokeCanvasBridgeCapabilitiesForThread,
   startCanvasBridgeServer,
   subscribeCanvasAgentPreviews,
   subscribeCanvasDrawingChanges,
@@ -42,6 +43,17 @@ describe("canvas bridge capabilities", () => {
     const grant = issueCanvasBridgeCapability({ root: "/state", threadId: "drawing-1" });
     revokeCanvasBridgeCapability(grant.token);
     expect(authorizeCanvasBridgeCapability(grant.token, "drawing-1")).toBeNull();
+  });
+
+  it("revokes every capability issued for one parent thread", () => {
+    const first = issueCanvasBridgeCapability({ root: "/state", threadId: "drawing-1" });
+    const second = issueCanvasBridgeCapability({ root: "/state", threadId: "drawing-1" });
+    const other = issueCanvasBridgeCapability({ root: "/state", threadId: "drawing-2" });
+
+    expect(revokeCanvasBridgeCapabilitiesForThread("drawing-1")).toBe(2);
+    expect(authorizeCanvasBridgeCapability(first.token, "drawing-1")).toBeNull();
+    expect(authorizeCanvasBridgeCapability(second.token, "drawing-1")).toBeNull();
+    expect(authorizeCanvasBridgeCapability(other.token, "drawing-2")).not.toBeNull();
   });
 
   it("serves capability-scoped drawings on an independent loopback listener", async () => {

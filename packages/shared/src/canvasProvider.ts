@@ -10,7 +10,7 @@ const CANVAS_PROVIDER_SUPPORT: Record<ProviderKind, boolean> = {
   codex: true,
   claudeAgent: true,
   cursor: true,
-  gemini: true,
+  antigravity: false,
   grok: true,
   droid: true,
   kilo: false,
