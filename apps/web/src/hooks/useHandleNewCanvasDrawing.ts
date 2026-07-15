@@ -1,5 +1,5 @@
 // FILE: useHandleNewCanvasDrawing.ts
-// Purpose: Creates a durable Canvas thread and its project-local Excalidraw scene as one UI action.
+// Purpose: Creates a durable Canvas thread and its server-resolved Excalidraw scene as one UI action.
 // Layer: Web orchestration hook
 
 import type { ProjectId, ThreadId } from "@synara/contracts";

@@ -59,6 +59,7 @@ import {
   saveCanvasDrawing,
   trashCanvasDrawing,
 } from "./canvasDrawingFiles";
+import { resolveCanvasDrawingRef } from "./canvasDrawingStorage";
 import {
   type CanvasBridgeDiagnostic,
   subscribeCanvasAgentPreviews,
@@ -630,7 +631,14 @@ const makeWsRpcHandlersLayer = () =>
           if (!project) {
             return yield* Effect.fail(new Error("The Canvas thread project is unavailable."));
           }
-          return { ...input, cwd: project.workspaceRoot };
+          return {
+            ...input,
+            ...resolveCanvasDrawingRef({
+              stateDir: config.stateDir,
+              project,
+              threadId: input.threadId,
+            }),
+          };
         });
 
       return AdmittedWsFeatureRpcGroup.of({

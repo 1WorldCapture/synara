@@ -33,6 +33,54 @@ afterEach(async () => {
 });
 
 describe("canvasDrawingFiles", () => {
+  it("stores drawings under caller-provided safe directory segments", async () => {
+    const cwd = await workspace();
+    const created = await createCanvasDrawing({
+      cwd,
+      directorySegments: ["drawings", "project-1"],
+      threadId: "drawing-scoped",
+    });
+
+    expect(created.relativePath).toBe(path.join("drawings", "project-1", "drawing-scoped.excalidraw"));
+    await expect(
+      access(path.join(cwd, "drawings", "project-1", "drawing-scoped.excalidraw")),
+    ).resolves.toBeUndefined();
+  });
+
+  it("imports a legacy project-local drawing into scoped storage without deleting the source", async () => {
+    const cwd = await workspace();
+    const legacyCwd = await workspace();
+    const legacyCreated = await createCanvasDrawing({
+      cwd: legacyCwd,
+      threadId: "drawing-legacy",
+    });
+    const legacyScene = {
+      ...EMPTY_CANVAS_SCENE,
+      elements: [{ id: "legacy-layer", type: "rectangle" }],
+    };
+    await saveCanvasDrawing({
+      cwd: legacyCwd,
+      threadId: "drawing-legacy",
+      scene: legacyScene,
+      expectedRevision: legacyCreated.revision,
+    });
+
+    const imported = await readCanvasDrawing({
+      cwd,
+      directorySegments: ["drawings", "project-1"],
+      legacyCwd,
+      threadId: "drawing-legacy",
+    });
+
+    expect(imported.scene).toEqual(legacyScene);
+    await expect(
+      access(path.join(cwd, "drawings", "project-1", "drawing-legacy.excalidraw")),
+    ).resolves.toBeUndefined();
+    await expect(
+      access(path.join(legacyCwd, "drawings", "drawing-legacy.excalidraw")),
+    ).resolves.toBeUndefined();
+  });
+
   it("creates, saves, reads, and moves a drawing to trash", async () => {
     const cwd = await workspace();
     const created = await createCanvasDrawing({ cwd, threadId: "drawing-1" });

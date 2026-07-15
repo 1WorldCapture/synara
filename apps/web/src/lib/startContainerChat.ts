@@ -14,6 +14,8 @@ export type StartContainerChatResult =
   | { ok: true; threadId: ThreadId | null }
   | { ok: false; error: string };
 
+export type StartContainerThreadResult = StartContainerChatResult;
+
 type StartFreshContainerChat = (options: { fresh: true }) => Promise<StartContainerChatResult>;
 
 /**
@@ -48,14 +50,26 @@ export async function startContainerChat(input: {
   readonly fresh?: boolean | undefined;
   readonly errorLabel: string;
 }): Promise<StartContainerChatResult> {
+  const threadOptions: NewThreadOptions | undefined =
+    input.fresh === true ? { fresh: true, envMode: "local", worktreePath: null } : undefined;
+  return startContainerThread({
+    ensureProjectId: input.ensureProjectId,
+    startThread: (projectId) => input.handleNewThread(projectId, threadOptions),
+    errorLabel: input.errorLabel,
+  });
+}
+
+export async function startContainerThread(input: {
+  readonly ensureProjectId: () => Promise<ProjectId | null>;
+  readonly startThread: (projectId: ProjectId) => Promise<ThreadId | null>;
+  readonly errorLabel: string;
+}): Promise<StartContainerThreadResult> {
   try {
     const projectId = await input.ensureProjectId();
     if (!projectId) {
       return { ok: false, error: input.errorLabel };
     }
-    const threadOptions: NewThreadOptions | undefined =
-      input.fresh === true ? { fresh: true, envMode: "local", worktreePath: null } : undefined;
-    const threadId = await input.handleNewThread(projectId, threadOptions);
+    const threadId = await input.startThread(projectId);
     return { ok: true, threadId };
   } catch (error) {
     return {

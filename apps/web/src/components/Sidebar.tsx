@@ -209,6 +209,7 @@ import {
 import { useHandleNewChat } from "../hooks/useHandleNewChat";
 import { useHandleNewCanvasDrawing } from "../hooks/useHandleNewCanvasDrawing";
 import { useHandleNewStudioChat } from "../hooks/useHandleNewStudioChat";
+import { useHandleNewStudioCanvas } from "../hooks/useHandleNewStudioCanvas";
 import { useHandleNewThread } from "../hooks/useHandleNewThread";
 import { useThreadHandoff } from "../hooks/useThreadHandoff";
 import { useFeedbackDialogStore } from "../feedbackDialogStore";
@@ -1478,6 +1479,7 @@ export default function Sidebar() {
   const { handleNewCanvasDrawing } = useHandleNewCanvasDrawing();
   const { handleNewChat } = useHandleNewChat();
   const { handleNewStudioChat } = useHandleNewStudioChat();
+  const { handleNewStudioCanvas } = useHandleNewStudioCanvas();
   const { createThreadHandoff } = useThreadHandoff();
   const routeThreadId = useParams({
     strict: false,
@@ -2562,6 +2564,9 @@ export default function Sidebar() {
   const handleCreateStudioChat = useCallback(async () => {
     await handleNewStudioChat({ fresh: true });
   }, [handleNewStudioChat]);
+  const handleCreateStudioCanvas = useCallback(async () => {
+    await handleNewStudioCanvas();
+  }, [handleNewStudioCanvas]);
 
   const beginWorkspaceRename = useCallback((workspaceId: string, title: string) => {
     setRenamingWorkspaceId(workspaceId);
@@ -6831,6 +6836,11 @@ export default function Sidebar() {
                         icon={NewThreadIcon}
                         label="New studio chat"
                         onClick={handleCreateStudioChat}
+                      />
+                      <SidebarPrimaryAction
+                        icon={PencilIcon}
+                        label="New studio canvas"
+                        onClick={handleCreateStudioCanvas}
                       />
                       <SidebarPrimaryAction
                         icon={SearchIcon}

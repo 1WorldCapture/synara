@@ -14,6 +14,8 @@ export type CanvasScene = typeof CanvasScene.Type;
 
 export const CanvasDrawingRef = Schema.Struct({
   cwd: TrimmedNonEmptyString,
+  directorySegments: Schema.optional(Schema.Array(TrimmedNonEmptyString)),
+  legacyCwd: Schema.optional(TrimmedNonEmptyString),
   threadId: ThreadId,
 });
 export type CanvasDrawingRef = typeof CanvasDrawingRef.Type;

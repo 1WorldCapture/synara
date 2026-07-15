@@ -68,6 +68,7 @@ import {
   startCanvasBridgeServer,
 } from "../../canvasBridge.ts";
 import { createCanvasDrawing } from "../../canvasDrawingFiles.ts";
+import { resolveCanvasDrawingRef } from "../../canvasDrawingStorage.ts";
 import { GitCore } from "../../git/Services/GitCore.ts";
 import {
   ProviderAdapterRequestError,
@@ -616,14 +617,19 @@ const make = Effect.gen(function* () {
       });
       return;
     }
+    const drawingRef = resolveCanvasDrawingRef({
+      stateDir: serverConfig.stateDir,
+      project,
+      threadId: input.threadId,
+    });
     yield* Effect.tryPromise(() =>
-      createCanvasDrawing({ cwd: project.workspaceRoot, threadId: input.threadId })
+      createCanvasDrawing(drawingRef)
     ).pipe(
       Effect.catch((error) =>
         Effect.logWarning("provider command reactor failed to initialize canvas drawing", {
           threadId: input.threadId,
           projectId: input.projectId,
-          workspaceRoot: project.workspaceRoot,
+          drawingRoot: drawingRef.cwd,
           cause: error instanceof Error ? error.message : String(error),
         }),
       ),
@@ -884,6 +890,19 @@ const make = Effect.gen(function* () {
       settingsSnapshot.settings,
     );
     const effectiveCwd = yield* resolveProjectedThreadWorkspaceCwd(thread);
+    const canvasProject =
+      thread.surface === "canvas"
+        ? Option.getOrUndefined(
+            yield* projectionSnapshotQuery.getProjectShellById(thread.projectId),
+          )
+        : undefined;
+    const canvasDrawingRef = canvasProject
+      ? resolveCanvasDrawingRef({
+          stateDir: serverConfig.stateDir,
+          project: canvasProject,
+          threadId,
+        })
+      : undefined;
     const workspaceState = resolveThreadWorkspaceState({
       envMode: thread.envMode,
       worktreePath: thread.worktreePath,
@@ -910,11 +929,14 @@ const make = Effect.gen(function* () {
 
     const startProviderSession = (resumeCursor?: unknown) => {
       const canvas =
-        thread.surface === "canvas" && preferredProvider === "grok" && effectiveCwd
+        thread.surface === "canvas" &&
+        preferredProvider === "grok" &&
+        effectiveCwd &&
+        canvasDrawingRef
           ? (() => {
               const previousToken = canvasBridgeTokens.get(threadId);
               if (previousToken) revokeCanvasBridgeForThread(threadId);
-              const grant = issueCanvasBridgeCapability({ cwd: effectiveCwd, threadId });
+              const grant = issueCanvasBridgeCapability(canvasDrawingRef);
               canvasBridgeTokens.set(threadId, grant.token);
               const mcpEntryPath = process.versions.bun
                 ? path.join(

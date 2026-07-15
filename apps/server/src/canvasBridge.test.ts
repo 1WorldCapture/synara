@@ -26,10 +26,17 @@ beforeEach(resetCanvasBridgeCapabilitiesForTest);
 
 describe("canvas bridge capabilities", () => {
   it("binds a high-entropy token to one drawing", () => {
-    const grant = issueCanvasBridgeCapability({ cwd: "/project", threadId: "drawing-1" });
+    const grant = issueCanvasBridgeCapability({
+      cwd: "/state",
+      directorySegments: ["drawings", "project-1"],
+      legacyCwd: "/project",
+      threadId: "drawing-1",
+    });
     expect(grant.token.length).toBeGreaterThan(32);
     expect(authorizeCanvasBridgeCapability(grant.token, "drawing-1")).toEqual({
-      cwd: "/project",
+      cwd: "/state",
+      directorySegments: ["drawings", "project-1"],
+      legacyCwd: "/project",
       threadId: "drawing-1",
     });
     expect(authorizeCanvasBridgeCapability(grant.token, "drawing-2")).toBeNull();

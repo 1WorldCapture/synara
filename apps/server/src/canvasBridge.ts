@@ -304,7 +304,12 @@ export function authorizeCanvasBridgeCapability(
   const right = Buffer.from(threadId);
   if (left.byteLength !== right.byteLength || !timingSafeEqual(left, right)) return null;
   grant.expiresAt = now + CAPABILITY_TTL_MS;
-  return { cwd: grant.cwd, threadId: grant.threadId };
+  return {
+    cwd: grant.cwd,
+    ...(grant.directorySegments ? { directorySegments: grant.directorySegments } : {}),
+    ...(grant.legacyCwd ? { legacyCwd: grant.legacyCwd } : {}),
+    threadId: grant.threadId,
+  };
 }
 
 export function resetCanvasBridgeCapabilitiesForTest(): void {
