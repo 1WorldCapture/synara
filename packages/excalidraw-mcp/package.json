@@ -26,6 +26,8 @@
   },
   "dependencies": {
     "@modelcontextprotocol/sdk": "1.25.2",
+    "@synara/contracts": "workspace:*",
+    "@synara/shared": "workspace:*",
     "zod": "^4.0.0"
   },
   "devDependencies": {

@@ -17,6 +17,7 @@ import {
   type AuthSessionState,
   type AuthWebSocketTokenResult,
   type CanvasDrawingChangedEvent,
+  type CanvasAgentPreviewEvent,
   type ThreadId,
   type ThreadBrowserState,
   type GitActionProgressEvent,
@@ -42,6 +43,8 @@ import {
 import { VOICE_TRANSCRIPTION_UPLOAD_ROUTE_PATH } from "@synara/shared/binaryTransfer";
 
 import { showConfirmDialogFallback } from "./confirmDialogFallback";
+import { logCanvasDiagnostic } from "./lib/canvasDiagnostics";
+import { flushCanvasBeforeTurn } from "./lib/canvasSaveCoordinator";
 import { showContextMenuFallback } from "./contextMenuFallback";
 import { requireHttpExternalUrl } from "./lib/externalUrl";
 import { WsTransport } from "./wsTransport";
@@ -118,12 +121,46 @@ function omitNullUserInputAnswers(
 const terminalEventListeners = createListenerRegistry<TerminalEvent>();
 const projectDevServerEventListeners = createListenerRegistry<ProjectDevServerEvent>();
 const canvasDrawingChangedListeners = createListenerRegistry<CanvasDrawingChangedEvent>();
+const canvasAgentPreviewListeners = createListenerRegistry<CanvasAgentPreviewEvent>();
+let unsubscribeCanvasAgentPreviewTransport: (() => void) | null = null;
 const automationEventListeners = createListenerRegistry<AutomationStreamEvent>();
 const orchestrationDomainEventListeners = createListenerRegistry<OrchestrationEvent>();
 const orchestrationShellEventListeners = createListenerRegistry<OrchestrationShellStreamItem>();
 const orchestrationThreadEventListeners = createListenerRegistry<OrchestrationThreadStreamItem>();
 const fallbackBrowserStateListeners = createListenerRegistry<ThreadBrowserState>();
 const fallbackBrowserStates = new Map<ThreadId, ThreadBrowserState>();
+
+function ensureCanvasAgentPreviewSubscription(transport: WsTransport): void {
+  if (unsubscribeCanvasAgentPreviewTransport) return;
+  logCanvasDiagnostic("native-api.transport-subscribing", {
+    listenerCount: canvasAgentPreviewListeners.size,
+  });
+  unsubscribeCanvasAgentPreviewTransport = transport.subscribe(
+    WS_CHANNELS.canvasAgentPreview,
+    (message) => {
+      logCanvasDiagnostic("native-api.event-dispatching", {
+        threadId: message.data.threadId,
+        streamId: message.data.streamId,
+        sequence: message.data.sequence,
+        phase: message.data.phase,
+        baseRevision: message.data.baseRevision,
+        operationCount: message.data.operations.length,
+        listenerCount: canvasAgentPreviewListeners.size,
+      });
+      canvasAgentPreviewListeners.emit(message.data);
+    },
+  );
+}
+
+function releaseCanvasAgentPreviewSubscription(): void {
+  if (unsubscribeCanvasAgentPreviewTransport) {
+    logCanvasDiagnostic("native-api.transport-unsubscribing", {
+      listenerCount: canvasAgentPreviewListeners.size,
+    });
+  }
+  unsubscribeCanvasAgentPreviewTransport?.();
+  unsubscribeCanvasAgentPreviewTransport = null;
+}
 
 function clearWsNativeApiListeners(): void {
   welcomeListeners.clear();
@@ -135,6 +172,7 @@ function clearWsNativeApiListeners(): void {
   terminalEventListeners.clear();
   projectDevServerEventListeners.clear();
   canvasDrawingChangedListeners.clear();
+  canvasAgentPreviewListeners.clear();
   automationEventListeners.clear();
   orchestrationDomainEventListeners.clear();
   orchestrationShellEventListeners.clear();
@@ -471,6 +509,20 @@ export function createWsNativeApi(): NativeApi {
       saveDrawing: (input) => transport.request(WS_METHODS.canvasSaveDrawing, input),
       deleteDrawing: (input) => transport.request(WS_METHODS.canvasDeleteDrawing, input),
       onDrawingChanged: canvasDrawingChangedListeners.subscribe,
+      onAgentPreview: (callback) => {
+        const unsubscribe = canvasAgentPreviewListeners.subscribe(callback);
+        logCanvasDiagnostic("native-api.listener-attached", {
+          listenerCount: canvasAgentPreviewListeners.size,
+        });
+        ensureCanvasAgentPreviewSubscription(transport);
+        return () => {
+          unsubscribe();
+          logCanvasDiagnostic("native-api.listener-detached", {
+            listenerCount: canvasAgentPreviewListeners.size,
+          });
+          if (canvasAgentPreviewListeners.size === 0) releaseCanvasAgentPreviewSubscription();
+        };
+      },
     },
     filesystem: {
       browse: (input) => transport.request(WS_METHODS.filesystemBrowse, input),
@@ -656,7 +708,10 @@ export function createWsNativeApi(): NativeApi {
     orchestration: {
       getSnapshot: () => transport.request(ORCHESTRATION_WS_METHODS.getSnapshot),
       getShellSnapshot: () => transport.request(ORCHESTRATION_WS_METHODS.getShellSnapshot),
-      dispatchCommand: (command) => {
+      dispatchCommand: async (command) => {
+        if (command.type === "thread.turn.start") {
+          await flushCanvasBeforeTurn(command.threadId);
+        }
         return transport.request(ORCHESTRATION_WS_METHODS.dispatchCommand, {
           command: omitNullUserInputAnswers(command),
         });
@@ -898,6 +953,7 @@ export function createWsNativeApi(): NativeApi {
 // singleton so each test gets a fresh WebSocket stream and cached push state.
 export async function resetWsNativeApiForTest(): Promise<void> {
   const transport = instance?.transport;
+  releaseCanvasAgentPreviewSubscription();
   instance = null;
   clearWsNativeApiListeners();
   fallbackBrowserStates.clear();
@@ -906,6 +962,7 @@ export async function resetWsNativeApiForTest(): Promise<void> {
 
 if (import.meta.hot) {
   import.meta.hot.dispose(() => {
+    releaseCanvasAgentPreviewSubscription();
     void instance?.transport.dispose();
     instance = null;
     clearWsNativeApiListeners();

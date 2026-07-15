@@ -8,7 +8,14 @@ import type {
   TurnId,
 } from "@synara/contracts";
 
-const CANVAS_MUTATION_TOOL_NAMES = ["create_view", "canvas_create_view"];
+const CANVAS_MUTATION_TOOL_NAMES = [
+  "create_view",
+  "canvas_create_view",
+  "begin_view",
+  "append_view",
+  "commit_view",
+  "cancel_view",
+];
 
 function activityMentionsCanvasMutation(activity: OrchestrationThreadActivity): boolean {
   const payload = activity.payload as Record<string, unknown>;

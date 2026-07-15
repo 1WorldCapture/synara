@@ -1,6 +1,6 @@
 import { Schema } from "effect";
 
-import { ThreadId, TrimmedNonEmptyString } from "./baseSchemas";
+import { NonNegativeInt, ThreadId, TrimmedNonEmptyString } from "./baseSchemas";
 
 export const CanvasScene = Schema.Struct({
   type: Schema.optional(Schema.Literal("excalidraw")),
@@ -41,6 +41,26 @@ export const CanvasDrawingChangedEvent = Schema.Struct({
   revision: TrimmedNonEmptyString,
 });
 export type CanvasDrawingChangedEvent = typeof CanvasDrawingChangedEvent.Type;
+
+export const CanvasAgentCamera = Schema.Struct({
+  x: Schema.Finite,
+  y: Schema.Finite,
+  width: Schema.Finite.check(Schema.isGreaterThan(0)),
+  height: Schema.Finite.check(Schema.isGreaterThan(0)),
+  durationMs: Schema.optional(NonNegativeInt),
+});
+export type CanvasAgentCamera = typeof CanvasAgentCamera.Type;
+
+export const CanvasAgentPreviewEvent = Schema.Struct({
+  threadId: ThreadId,
+  streamId: TrimmedNonEmptyString,
+  sequence: NonNegativeInt,
+  phase: Schema.Literals(["start", "partial", "complete", "cancelled"]),
+  baseRevision: TrimmedNonEmptyString,
+  operations: Schema.Array(Schema.Record(Schema.String, Schema.Json)),
+  camera: Schema.optional(CanvasAgentCamera),
+});
+export type CanvasAgentPreviewEvent = typeof CanvasAgentPreviewEvent.Type;
 
 export interface CanvasDrawingSnapshot {
   readonly relativePath: string;

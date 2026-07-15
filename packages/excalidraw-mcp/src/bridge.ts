@@ -1,3 +1,5 @@
+import type { CanvasAgentPreviewEvent } from "@synara/contracts";
+
 export interface BridgeSceneSnapshot {
   readonly relativePath: string;
   readonly scene: {
@@ -15,7 +17,10 @@ export interface CanvasBridgeConfig {
   readonly threadId: string;
 }
 
+export type BridgeAgentPreview = Omit<CanvasAgentPreviewEvent, "threadId">;
+
 const BRIDGE_REQUEST_TIMEOUT_MS = 15_000;
+const PREVIEW_REQUEST_TIMEOUT_MS = 1_000;
 
 export function readBridgeConfig(env: NodeJS.ProcessEnv = process.env): CanvasBridgeConfig {
   const baseUrl = env.SYNARA_CANVAS_BRIDGE_URL?.trim();
@@ -31,18 +36,19 @@ export function readBridgeConfig(env: NodeJS.ProcessEnv = process.env): CanvasBr
   return { baseUrl: parsed.toString().replace(/\/$/, ""), token, threadId };
 }
 
-async function requestBridge(
+async function postBridge(
   config: CanvasBridgeConfig,
-  operation: "read" | "save",
+  operation: "read" | "save" | "preview",
   body: Record<string, unknown>,
-): Promise<BridgeSceneSnapshot> {
+  timeoutMs = BRIDGE_REQUEST_TIMEOUT_MS,
+): Promise<Response> {
   const response = await fetch(`${config.baseUrl}/internal/canvas/${operation}`, {
     method: "POST",
     headers: {
       authorization: `Bearer ${config.token}`,
       "content-type": "application/json",
     },
-    signal: AbortSignal.timeout(BRIDGE_REQUEST_TIMEOUT_MS),
+    signal: AbortSignal.timeout(timeoutMs),
     body: JSON.stringify({ threadId: config.threadId, ...body }),
   });
   if (!response.ok) {
@@ -52,6 +58,15 @@ async function requestBridge(
         : `Synara Canvas bridge ${operation} failed (${response.status}).`,
     );
   }
+  return response;
+}
+
+async function requestBridge(
+  config: CanvasBridgeConfig,
+  operation: "read" | "save",
+  body: Record<string, unknown>,
+): Promise<BridgeSceneSnapshot> {
+  const response = await postBridge(config, operation, body);
   return (await response.json()) as BridgeSceneSnapshot;
 }
 
@@ -61,3 +76,10 @@ export const saveScene = (
   config: CanvasBridgeConfig,
   input: { readonly scene: BridgeSceneSnapshot["scene"]; readonly expectedRevision: string },
 ) => requestBridge(config, "save", input);
+
+export async function publishPreview(
+  config: CanvasBridgeConfig,
+  preview: BridgeAgentPreview,
+): Promise<void> {
+  await postBridge(config, "preview", { ...preview }, PREVIEW_REQUEST_TIMEOUT_MS);
+}

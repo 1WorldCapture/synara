@@ -2,19 +2,23 @@
 // Purpose: Editor-style Excalidraw workspace with project drawings and a persistent AI chat.
 // Layer: Chat route presentation
 
-import type {
-  CanvasDrawingSnapshot,
-  CanvasScene,
-  ProjectId,
-  ThreadId,
-  TurnId,
+import {
+  type CanvasAgentCamera,
+  type CanvasAgentPreviewEvent,
+  type CanvasDrawingSnapshot,
+  type CanvasScene,
+  type ProjectId,
+  type ThreadId,
+  type TurnId,
 } from "@synara/contracts";
 import {
+  CaptureUpdateAction,
   convertToExcalidrawElements,
   Excalidraw,
   FONT_FAMILY,
   serializeAsJSON,
 } from "@excalidraw/excalidraw";
+import { applyExcalidrawElementOperations } from "@synara/shared/excalidrawScene";
 import type { ExcalidrawImperativeAPI } from "@excalidraw/excalidraw/types";
 import "@excalidraw/excalidraw/index.css";
 import { useNavigate } from "@tanstack/react-router";
@@ -26,18 +30,28 @@ import {
   useRef,
   useState,
 } from "react";
-import { FiMessageSquare, FiPlus, FiTrash2 } from "react-icons/fi";
+import { FiCrosshair, FiMessageSquare, FiPlus, FiTrash2 } from "react-icons/fi";
 
 import { useHandleNewCanvasDrawing } from "~/hooks/useHandleNewCanvasDrawing";
+import { useMediaQuery } from "~/hooks/useMediaQuery";
 import { useTheme } from "~/hooks/useTheme";
 import { canvasAgentMutationTurnId, isCanvasAgentEditing } from "~/lib/canvasAgentState";
-import { ChatBubbleIcon } from "~/lib/icons";
-import { cn } from "~/lib/utils";
+import { registerCanvasSaveBarrier } from "~/lib/canvasSaveCoordinator";
+import {
+  canvasCameraAnimationStep,
+  canvasCameraTarget,
+  canvasPreviewEventDecision,
+  isCanvasCameraSettled,
+  type CanvasPreviewCursor,
+} from "~/lib/canvasAgentPreview";
+import { logCanvasDiagnostic } from "~/lib/canvasDiagnostics";
+import { ChatBubbleIcon, Maximize2, Minimize2 } from "~/lib/icons";
+import { cn, newCommandId } from "~/lib/utils";
 import { readNativeApi } from "~/nativeApi";
 import { createThreadSelector, createThreadShellsSelector } from "~/storeSelectors";
 import { useStore } from "~/store";
 import { ResizableChatPane, useResizableChatPane } from "./ResizableChatPane";
-import { ChatHeaderButton } from "./chat/chatHeaderControls";
+import { ChatHeaderButton, ChatHeaderIconButton } from "./chat/chatHeaderControls";
 import { toastManager } from "./ui/toast";
 
 type SaveState = "loading" | "saved" | "saving" | "conflict" | "error";
@@ -169,7 +183,10 @@ export function CanvasWorkspaceView(props: {
     activities: thread?.activities ?? [],
   });
   const excalidrawApiRef = useRef<ExcalidrawImperativeAPI | null>(null);
+  const canvasContainerRef = useRef<HTMLDivElement | null>(null);
   const revisionRef = useRef<string | null>(null);
+  const authoritativeSceneRef = useRef<CanvasScene | null>(null);
+  const previewSceneRef = useRef<CanvasScene | null>(null);
   const renderedSceneJsonRef = useRef<string | null>(null);
   const pendingSceneRef = useRef<PendingSceneChange | null>(null);
   const saveTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -178,6 +195,12 @@ export function CanvasWorkspaceView(props: {
   const latestNotifiedRevisionRef = useRef<string | null>(null);
   const liveSyncQueuedRef = useRef(false);
   const applyingRemoteSceneRef = useRef(false);
+  const activePreviewCursorRef = useRef<CanvasPreviewCursor | null>(null);
+  const pendingPreviewRenderSceneRef = useRef<CanvasScene | null>(null);
+  const previewRenderFrameRef = useRef<number | null>(null);
+  const cameraAnimationFrameRef = useRef<number | null>(null);
+  const lastAgentCameraRef = useRef<CanvasAgentCamera | null>(null);
+  const followingAgentRef = useRef(true);
   const conflictRef = useRef(false);
   const pendingFinalReloadTurnIdRef = useRef<TurnId | null>(
     thread?.latestTurn?.state === "running" && agentEditing ? thread.latestTurn.turnId : null,
@@ -187,6 +210,145 @@ export function CanvasWorkspaceView(props: {
   const lastSettledMutationTurnIdRef = useRef<TurnId | null>(null);
   const [initialScene, setInitialScene] = useState<CanvasScene | null>(null);
   const [saveState, setSaveState] = useState<SaveState>("loading");
+  const [previewActive, setPreviewActive] = useState(false);
+  const [finalSyncActive, setFinalSyncActive] = useState(false);
+  const [followingAgent, setFollowingAgent] = useState(true);
+  const [immersive, setImmersive] = useState(false);
+  const [takingOver, setTakingOver] = useState(false);
+  const reducedMotion = useMediaQuery("(prefers-reduced-motion: reduce)");
+  const canvasLocked = agentEditing || previewActive || finalSyncActive;
+
+  const setAgentFollowing = useCallback((value: boolean) => {
+    followingAgentRef.current = value;
+    setFollowingAgent(value);
+  }, []);
+
+  const cancelCameraAnimation = useCallback(() => {
+    if (cameraAnimationFrameRef.current !== null) {
+      cancelAnimationFrame(cameraAnimationFrameRef.current);
+      cameraAnimationFrameRef.current = null;
+    }
+  }, []);
+
+  const animateAgentCamera = useCallback(
+    (camera: CanvasAgentCamera) => {
+      lastAgentCameraRef.current = camera;
+      if (!followingAgentRef.current) return;
+      const api = excalidrawApiRef.current;
+      if (!api) return;
+      cancelCameraAnimation();
+      const appState = api.getAppState();
+      const container = canvasContainerRef.current;
+      const width = Number(appState.width) || container?.clientWidth || 1;
+      const height = Number(appState.height) || container?.clientHeight || 1;
+      const target = canvasCameraTarget(camera, { width, height });
+      const current = {
+        scrollX: Number(appState.scrollX) || 0,
+        scrollY: Number(appState.scrollY) || 0,
+        zoom: Number(appState.zoom?.value) || 1,
+      };
+      const durationMs = reducedMotion ? 0 : (camera.durationMs ?? 650);
+      let position = current;
+      let previousTime = performance.now();
+      const startedAt = previousTime;
+      const applyPosition = (next: typeof current) => {
+        applyingRemoteSceneRef.current = true;
+        api.updateScene({
+          appState: {
+            scrollX: next.scrollX,
+            scrollY: next.scrollY,
+            zoom: { value: next.zoom },
+          } as never,
+          captureUpdate: CaptureUpdateAction.NEVER,
+        });
+      };
+      if (durationMs === 0) {
+        applyPosition(target);
+        requestAnimationFrame(() => {
+          applyingRemoteSceneRef.current = false;
+        });
+        return;
+      }
+      const frame = (now: number) => {
+        position = canvasCameraAnimationStep(position, target, now - previousTime);
+        previousTime = now;
+        const finished = now - startedAt >= durationMs || isCanvasCameraSettled(position, target);
+        applyPosition(finished ? target : position);
+        if (finished) {
+          cameraAnimationFrameRef.current = null;
+          requestAnimationFrame(() => {
+            applyingRemoteSceneRef.current = false;
+          });
+          return;
+        }
+        cameraAnimationFrameRef.current = requestAnimationFrame(frame);
+      };
+      cameraAnimationFrameRef.current = requestAnimationFrame(frame);
+    },
+    [cancelCameraAnimation, reducedMotion],
+  );
+
+  const applyPreviewScene = useCallback((scene: CanvasScene) => {
+    const displayScene = canonicalizeAgentElements(scene).scene;
+    applyingRemoteSceneRef.current = true;
+    const api = excalidrawApiRef.current;
+    logCanvasDiagnostic("workspace.preview-rendering", {
+      threadId: props.threadId,
+      elementCount: displayScene.elements.length,
+      apiAvailable: Boolean(api),
+    });
+    if (api) {
+      api.updateScene({
+        elements: displayScene.elements as never,
+        captureUpdate: CaptureUpdateAction.NEVER,
+      });
+    } else {
+      setInitialScene(displayScene);
+    }
+    requestAnimationFrame(() => {
+      applyingRemoteSceneRef.current = false;
+    });
+  }, [props.threadId]);
+
+  const applyPreviewOperations = useCallback(
+    (operations: ReadonlyArray<Record<string, unknown>>) => {
+      const current = previewSceneRef.current ?? authoritativeSceneRef.current;
+      if (!current) {
+        logCanvasDiagnostic("workspace.operations-skipped", {
+          threadId: props.threadId,
+          reason: "scene-unavailable",
+          operationCount: operations.length,
+        });
+        return;
+      }
+      const next = applyExcalidrawElementOperations(current, operations);
+      previewSceneRef.current = next;
+      logCanvasDiagnostic("workspace.operations-applied", {
+        threadId: props.threadId,
+        operationCount: operations.length,
+        beforeElementCount: current.elements.length,
+        afterElementCount: next.elements.length,
+        changed: next !== current,
+      });
+      if (next === current) return;
+      pendingPreviewRenderSceneRef.current = next;
+      previewRenderFrameRef.current ??= requestAnimationFrame(() => {
+        previewRenderFrameRef.current = null;
+        const pendingScene = pendingPreviewRenderSceneRef.current;
+        pendingPreviewRenderSceneRef.current = null;
+        if (pendingScene) applyPreviewScene(pendingScene);
+      });
+    },
+    [applyPreviewScene, props.threadId],
+  );
+
+  const cancelPreviewRender = useCallback(() => {
+    if (previewRenderFrameRef.current !== null) {
+      cancelAnimationFrame(previewRenderFrameRef.current);
+      previewRenderFrameRef.current = null;
+    }
+    pendingPreviewRenderSceneRef.current = null;
+  }, []);
 
   const recordSnapshotMetadata = useCallback(
     (snapshot: CanvasDrawingSnapshot, renderedScene = snapshot.scene) => {
@@ -197,7 +359,17 @@ export function CanvasWorkspaceView(props: {
   );
 
   const applySnapshot = useCallback(
-    (snapshot: CanvasDrawingSnapshot, displayScene = snapshot.scene) => {
+    (
+      snapshot: CanvasDrawingSnapshot,
+      displayScene = snapshot.scene,
+      options: { readonly preserveViewport?: boolean } = {},
+    ) => {
+      cancelPreviewRender();
+      activePreviewCursorRef.current = null;
+      authoritativeSceneRef.current = displayScene;
+      previewSceneRef.current = null;
+      lastAgentCameraRef.current = null;
+      setPreviewActive(false);
       recordSnapshotMetadata(snapshot, displayScene);
       pendingSceneRef.current = null;
       conflictRef.current = false;
@@ -206,7 +378,7 @@ export function CanvasWorkspaceView(props: {
       if (api) {
         api.updateScene({
           elements: displayScene.elements as never,
-          appState: displayScene.appState as never,
+          ...(options.preserveViewport ? {} : { appState: displayScene.appState as never }),
         });
         if (displayScene.files) {
           api.addFiles(Object.values(displayScene.files) as never);
@@ -214,12 +386,20 @@ export function CanvasWorkspaceView(props: {
       } else {
         setInitialScene(displayScene);
       }
+      logCanvasDiagnostic("workspace.snapshot-applied", {
+        threadId: props.threadId,
+        revision: snapshot.revision,
+        sourceElementCount: snapshot.scene.elements.length,
+        renderedElementCount: displayScene.elements.length,
+        preserveViewport: options.preserveViewport === true,
+        apiAvailable: Boolean(api),
+      });
       requestAnimationFrame(() => {
         applyingRemoteSceneRef.current = false;
       });
       setSaveState("saved");
     },
-    [recordSnapshotMetadata],
+    [cancelPreviewRender, props.threadId, recordSnapshotMetadata],
   );
 
   const syncDrawing = useCallback(
@@ -229,7 +409,19 @@ export function CanvasWorkspaceView(props: {
       const settled = mode === "settled";
       const sync = drawingIoChainRef.current.then(async () => {
         const api = readNativeApi();
-        if (!api) return false;
+        logCanvasDiagnostic("workspace.sync-started", {
+          threadId: props.threadId,
+          mode,
+          currentRevision: revisionRef.current,
+        });
+        if (!api) {
+          logCanvasDiagnostic("workspace.sync-skipped", {
+            threadId: props.threadId,
+            mode,
+            reason: "native-api-unavailable",
+          });
+          return false;
+        }
         const localSceneGeneration = localSceneGenerationRef.current;
         const localSceneChanged = () =>
           !foreground &&
@@ -239,12 +431,34 @@ export function CanvasWorkspaceView(props: {
         if (foreground) setSaveState("loading");
         try {
           let snapshot = await api.canvas.readDrawing({ threadId: props.threadId });
-          if (localSceneChanged()) return false;
-          if (live && snapshot.revision === revisionRef.current) return true;
+          logCanvasDiagnostic("workspace.sync-read", {
+            threadId: props.threadId,
+            mode,
+            currentRevision: revisionRef.current,
+            snapshotRevision: snapshot.revision,
+            elementCount: snapshot.scene.elements.length,
+          });
+          if (localSceneChanged()) {
+            logCanvasDiagnostic("workspace.sync-skipped", {
+              threadId: props.threadId,
+              mode,
+              reason: "local-scene-changed",
+            });
+            return false;
+          }
+          if (live && snapshot.revision === revisionRef.current) {
+            logCanvasDiagnostic("workspace.sync-skipped", {
+              threadId: props.threadId,
+              mode,
+              reason: "revision-unchanged",
+              snapshotRevision: snapshot.revision,
+            });
+            return true;
+          }
           const canonicalized = canonicalizeAgentElements(snapshot.scene);
           if (canonicalized.changed) {
             if (live || settled) {
-              applySnapshot(snapshot, canonicalized.scene);
+              applySnapshot(snapshot, canonicalized.scene, { preserveViewport: true });
               return true;
             }
             snapshot = await api.canvas.saveDrawing({
@@ -253,9 +467,20 @@ export function CanvasWorkspaceView(props: {
               expectedRevision: snapshot.revision,
             });
           }
-          applySnapshot(snapshot);
+          applySnapshot(snapshot, snapshot.scene, { preserveViewport: !foreground });
+          logCanvasDiagnostic("workspace.sync-applied", {
+            threadId: props.threadId,
+            mode,
+            snapshotRevision: snapshot.revision,
+            elementCount: snapshot.scene.elements.length,
+          });
           return true;
         } catch (error) {
+          logCanvasDiagnostic("workspace.sync-failed", {
+            threadId: props.threadId,
+            mode,
+            error: error instanceof Error ? error.message : String(error),
+          });
           if (foreground) {
             setSaveState("error");
             toastManager.add({
@@ -319,6 +544,7 @@ export function CanvasWorkspaceView(props: {
           expectedRevision,
         });
         revisionRef.current = snapshot.revision;
+        authoritativeSceneRef.current = snapshot.scene;
         renderedSceneJsonRef.current = JSON.stringify(snapshot.scene);
         if (!pendingSceneRef.current) setSaveState("saved");
       } catch (error) {
@@ -342,32 +568,62 @@ export function CanvasWorkspaceView(props: {
 
   const handleSceneChange = useCallback(
     (elements: readonly unknown[], appState: unknown, files: unknown) => {
-      if (applyingRemoteSceneRef.current || agentEditing || conflictRef.current) {
+      if (
+        applyingRemoteSceneRef.current ||
+        cameraAnimationFrameRef.current !== null ||
+        finalSyncInFlightTurnIdRef.current !== null ||
+        canvasLocked ||
+        conflictRef.current
+      ) {
         return;
       }
       localSceneGenerationRef.current += 1;
       pendingSceneRef.current = { kind: "excalidraw", elements, appState, files };
       saveTimerRef.current ??= setTimeout(flushPendingSave, AUTOSAVE_DELAY_MS);
     },
-    [agentEditing, flushPendingSave],
+    [canvasLocked, flushPendingSave],
   );
 
   useEffect(() => {
-    if (agentEditing) {
+    if (canvasLocked) {
       flushPendingSave();
     }
-  }, [agentEditing, flushPendingSave]);
+  }, [canvasLocked, flushPendingSave]);
+
+  useEffect(
+    () =>
+      registerCanvasSaveBarrier(props.threadId, async () => {
+        flushPendingSave();
+        await drawingIoChainRef.current;
+        if (pendingSceneRef.current || conflictRef.current) {
+          throw new Error("Save the drawing successfully before starting the agent.");
+        }
+      }),
+    [flushPendingSave, props.threadId],
+  );
 
   useEffect(() => {
     const api = readNativeApi();
     if (!api) return;
     return api.canvas.onDrawingChanged((event) => {
-      if (
-        event.threadId !== props.threadId ||
-        event.revision === revisionRef.current ||
-        pendingSceneRef.current !== null ||
-        conflictRef.current
-      ) {
+      const ignoredReason =
+        event.threadId !== props.threadId
+          ? "different-thread"
+          : event.revision === revisionRef.current
+            ? "revision-unchanged"
+            : pendingSceneRef.current !== null
+              ? "pending-local-scene"
+              : conflictRef.current
+                ? "save-conflict"
+                : null;
+      logCanvasDiagnostic("workspace.drawing-change-received", {
+        threadId: props.threadId,
+        eventThreadId: event.threadId,
+        eventRevision: event.revision,
+        currentRevision: revisionRef.current,
+        ignoredReason,
+      });
+      if (ignoredReason) {
         return;
       }
       latestNotifiedRevisionRef.current = event.revision;
@@ -391,10 +647,108 @@ export function CanvasWorkspaceView(props: {
   }, [props.threadId, syncDrawing]);
 
   useEffect(() => {
+    if (!initialScene) return;
+    const api = readNativeApi();
+    if (!api) return;
+    logCanvasDiagnostic("workspace.preview-listener-subscribing", {
+      threadId: props.threadId,
+      revision: revisionRef.current,
+    });
+    return api.canvas.onAgentPreview((event: CanvasAgentPreviewEvent) => {
+      if (event.threadId !== props.threadId) return;
+      const current = activePreviewCursorRef.current;
+      const decision = canvasPreviewEventDecision({
+        current,
+        event,
+        revision: revisionRef.current,
+      });
+      logCanvasDiagnostic("workspace.preview-event-evaluated", {
+        threadId: props.threadId,
+        streamId: event.streamId,
+        sequence: event.sequence,
+        phase: event.phase,
+        baseRevision: event.baseRevision,
+        currentRevision: revisionRef.current,
+        currentStreamId: current?.streamId,
+        currentSequence: current?.sequence,
+        operationCount: event.operations.length,
+        apply: decision.apply,
+        reason: decision.reason,
+      });
+      if (!decision.apply) {
+        return;
+      }
+      const newStream = !current || current.streamId !== event.streamId;
+      activePreviewCursorRef.current = {
+        streamId: event.streamId,
+        sequence: event.sequence,
+      };
+      if (newStream) {
+        previewSceneRef.current = authoritativeSceneRef.current;
+        lastAgentCameraRef.current = null;
+        setAgentFollowing(true);
+      }
+      applyPreviewOperations(event.operations);
+      if (event.phase === "start" || event.phase === "partial") {
+        setPreviewActive(true);
+      } else {
+        activePreviewCursorRef.current = null;
+        setPreviewActive(false);
+        previewSceneRef.current = null;
+        lastAgentCameraRef.current = null;
+        if (event.phase === "cancelled") {
+          cancelPreviewRender();
+          cancelCameraAnimation();
+          const authoritativeScene = authoritativeSceneRef.current;
+          if (authoritativeScene) applyPreviewScene(authoritativeScene);
+        }
+      }
+      if (event.camera) animateAgentCamera(event.camera);
+    });
+  }, [
+    animateAgentCamera,
+    applyPreviewOperations,
+    applyPreviewScene,
+    cancelPreviewRender,
+    cancelCameraAnimation,
+    initialScene,
+    props.threadId,
+    setAgentFollowing,
+  ]);
+
+  useEffect(() => {
+    const latestTurn = thread?.latestTurn ?? null;
+    if (!previewActive || !latestTurn || latestTurn.state === "running") return;
+    logCanvasDiagnostic("workspace.preview-reset-by-turn-state", {
+      threadId: props.threadId,
+      streamId: activePreviewCursorRef.current?.streamId,
+      sequence: activePreviewCursorRef.current?.sequence,
+      latestTurnId: latestTurn.turnId,
+      latestTurnState: latestTurn.state,
+      latestTurnCompletedAt: latestTurn.completedAt,
+    });
+    cancelPreviewRender();
+    cancelCameraAnimation();
+    activePreviewCursorRef.current = null;
+    previewSceneRef.current = null;
+    lastAgentCameraRef.current = null;
+    setPreviewActive(false);
+    const authoritativeScene = authoritativeSceneRef.current;
+    if (authoritativeScene) applyPreviewScene(authoritativeScene);
+  }, [
+    applyPreviewScene,
+    cancelCameraAnimation,
+    cancelPreviewRender,
+    previewActive,
+    props.threadId,
+    thread?.latestTurn,
+  ]);
+
+  useEffect(() => {
     const latestTurn = thread?.latestTurn ?? null;
     if (!latestTurn) return;
     if (latestTurn.state === "running") {
-      if (agentEditing) {
+      if (agentEditing || previewActive) {
         pendingFinalReloadTurnIdRef.current = latestTurn.turnId;
       }
       return;
@@ -405,8 +759,16 @@ export function CanvasWorkspaceView(props: {
         : mutationTurnId;
     if (!finalSyncTurnId || lastSettledMutationTurnIdRef.current === finalSyncTurnId) return;
     if (finalSyncInFlightTurnIdRef.current === finalSyncTurnId) return;
+    logCanvasDiagnostic("workspace.final-sync-starting", {
+      threadId: props.threadId,
+      turnId: finalSyncTurnId,
+      latestTurnState: latestTurn.state,
+      mutationTurnId,
+      pendingFinalReloadTurnId: pendingFinalReloadTurnIdRef.current,
+    });
     finalSyncAbortControllerRef.current?.abort();
     finalSyncInFlightTurnIdRef.current = finalSyncTurnId;
+    setFinalSyncActive(true);
     const abortController = new AbortController();
     finalSyncAbortControllerRef.current = abortController;
     void (async () => {
@@ -429,6 +791,12 @@ export function CanvasWorkspaceView(props: {
           if (await syncDrawing("settled")) {
             if (abortController.signal.aborted) return;
             lastSettledMutationTurnIdRef.current = finalSyncTurnId;
+            logCanvasDiagnostic("workspace.final-sync-settled", {
+              threadId: props.threadId,
+              turnId: finalSyncTurnId,
+              latestTurnState: latestTurn.state,
+              revision: revisionRef.current,
+            });
             if (pendingFinalReloadTurnIdRef.current === finalSyncTurnId) {
               pendingFinalReloadTurnIdRef.current = null;
             }
@@ -438,22 +806,87 @@ export function CanvasWorkspaceView(props: {
       } finally {
         if (finalSyncInFlightTurnIdRef.current === finalSyncTurnId) {
           finalSyncInFlightTurnIdRef.current = null;
+          setFinalSyncActive(false);
         }
         if (finalSyncAbortControllerRef.current === abortController) {
           finalSyncAbortControllerRef.current = null;
         }
       }
     })();
-  }, [agentEditing, flushPendingSave, mutationTurnId, syncDrawing, thread?.latestTurn]);
+  }, [
+    agentEditing,
+    flushPendingSave,
+    mutationTurnId,
+    previewActive,
+    props.threadId,
+    syncDrawing,
+    thread?.latestTurn,
+  ]);
 
   useEffect(
     () => () => {
       finalSyncAbortControllerRef.current?.abort();
+      cancelPreviewRender();
+      cancelCameraAnimation();
       if (saveTimerRef.current) clearTimeout(saveTimerRef.current);
       flushPendingSave();
     },
-    [flushPendingSave],
+    [cancelCameraAnimation, cancelPreviewRender, flushPendingSave],
   );
+
+  useEffect(() => {
+    const frame = requestAnimationFrame(() => excalidrawApiRef.current?.refresh());
+    return () => cancelAnimationFrame(frame);
+  }, [immersive]);
+
+  useEffect(() => {
+    if (!immersive) return;
+    const onKeyDown = (event: KeyboardEvent) => {
+      if (event.key !== "Escape") return;
+      event.preventDefault();
+      setImmersive(false);
+    };
+    window.addEventListener("keydown", onKeyDown);
+    return () => window.removeEventListener("keydown", onKeyDown);
+  }, [immersive]);
+
+  const suspendAgentFollowing = useCallback(() => {
+    if (!canvasLocked || !followingAgentRef.current) return;
+    cancelCameraAnimation();
+    applyingRemoteSceneRef.current = false;
+    setAgentFollowing(false);
+  }, [cancelCameraAnimation, canvasLocked, setAgentFollowing]);
+
+  const resumeAgentFollowing = useCallback(() => {
+    setAgentFollowing(true);
+    const camera = lastAgentCameraRef.current;
+    if (camera) animateAgentCamera(camera);
+  }, [animateAgentCamera, setAgentFollowing]);
+
+  const handleTakeOver = useCallback(async () => {
+    const api = readNativeApi();
+    if (!api || takingOver) return;
+    setTakingOver(true);
+    try {
+      await api.orchestration.dispatchCommand({
+        type: "thread.turn.interrupt",
+        commandId: newCommandId(),
+        threadId: props.threadId,
+        createdAt: new Date().toISOString(),
+      });
+    } catch (error) {
+      setTakingOver(false);
+      toastManager.add({
+        type: "error",
+        title: "Unable to stop the agent",
+        description: error instanceof Error ? error.message : "The drawing turn could not be stopped.",
+      });
+    }
+  }, [props.threadId, takingOver]);
+
+  useEffect(() => {
+    if (!canvasLocked) setTakingOver(false);
+  }, [canvasLocked]);
 
   const handleDelete = useCallback(async () => {
     if (!window.confirm(`Delete “${thread?.title ?? "this drawing"}”?`)) return;
@@ -481,8 +914,20 @@ export function CanvasWorkspaceView(props: {
   }, [drawings, navigate, props.threadId, thread?.title]);
 
   return (
-    <div className="flex h-full min-h-0 w-full overflow-hidden" data-testid="canvas-workspace">
-      <aside className="flex w-56 shrink-0 flex-col border-r border-border/65 bg-[var(--color-background-surface)]">
+    <div
+      className={cn(
+        "flex h-full min-h-0 w-full overflow-hidden",
+        immersive && "fixed inset-0 z-[100] bg-background",
+      )}
+      data-testid="canvas-workspace"
+      data-immersive={immersive ? "true" : "false"}
+    >
+      <aside
+        className={cn(
+          "flex w-56 shrink-0 flex-col border-r border-border/65 bg-[var(--color-background-surface)]",
+          immersive && "hidden",
+        )}
+      >
         <div className="flex h-11 shrink-0 items-center gap-2 border-b border-border/65 px-3">
           <div className="min-w-0 flex-1">
             <div className="truncate text-[11px] text-muted-foreground">Project</div>
@@ -532,10 +977,30 @@ export function CanvasWorkspaceView(props: {
           <div className="min-w-0 flex-1 truncate text-[13px] font-medium">
             {thread?.title ?? "Drawing"}
           </div>
-          {agentEditing ? (
+          {canvasLocked ? (
             <span className="rounded-full bg-amber-500/12 px-2 py-1 text-[10px] font-medium text-amber-700 dark:text-amber-300">
-              AI is editing · pan and zoom only
+              AI is drawing · pan and zoom only
             </span>
+          ) : null}
+          {canvasLocked && !followingAgent ? (
+            <ChatHeaderButton
+              type="button"
+              className="gap-1.5 px-2 text-[11px]"
+              onClick={resumeAgentFollowing}
+            >
+              <FiCrosshair className="size-3.5" />
+              Follow agent
+            </ChatHeaderButton>
+          ) : null}
+          {canvasLocked ? (
+            <ChatHeaderButton
+              type="button"
+              className="px-2 text-[11px] disabled:cursor-wait disabled:opacity-60"
+              disabled={takingOver}
+              onClick={() => void handleTakeOver()}
+            >
+              {takingOver ? "Stopping…" : "Take over"}
+            </ChatHeaderButton>
           ) : null}
           {saveState === "conflict" ? (
             <button
@@ -556,38 +1021,55 @@ export function CanvasWorkspaceView(props: {
             </button>
           ) : null}
           <span className="text-[10px] text-muted-foreground">{saveStateLabel(saveState)}</span>
-          <button
+          <ChatHeaderIconButton
             type="button"
-            className="inline-flex size-7 items-center justify-center rounded-md text-muted-foreground hover:bg-muted hover:text-foreground"
-            aria-pressed={chatPane.visible}
-            title={chatPane.visible ? "Hide chat panel" : "Show chat panel"}
-            aria-label={chatPane.visible ? "Hide chat panel" : "Show chat panel"}
-            onClick={chatPane.toggleVisible}
+            label={immersive ? "Exit full screen" : "Enter full screen"}
+            title={immersive ? "Exit full screen" : "Enter full screen"}
+            onClick={() => setImmersive((value) => !value)}
           >
-            <FiMessageSquare className="size-3.5" />
-          </button>
-          <button
-            type="button"
-            className="inline-flex size-7 items-center justify-center rounded-md text-muted-foreground hover:bg-destructive/10 hover:text-destructive"
-            title="Delete drawing"
-            aria-label="Delete drawing"
-            onClick={() => void handleDelete()}
-          >
-            <FiTrash2 className="size-3.5" />
-          </button>
-          <ChatHeaderButton
-            type="button"
-            tone="outline"
-            aria-pressed={true}
-            title="Switch to chat view"
-            className="w-[5.5rem] gap-1.5"
-            onClick={props.onExitCanvasView}
-          >
-            <ChatBubbleIcon className="size-3.5" />
-            <span className="truncate font-normal">Chat</span>
-          </ChatHeaderButton>
+            {immersive ? <Minimize2 className="size-3.5" /> : <Maximize2 className="size-3.5" />}
+          </ChatHeaderIconButton>
+          {!immersive ? (
+            <>
+              <ChatHeaderIconButton
+                type="button"
+                label={chatPane.visible ? "Hide chat panel" : "Show chat panel"}
+                aria-pressed={chatPane.visible}
+                title={chatPane.visible ? "Hide chat panel" : "Show chat panel"}
+                onClick={chatPane.toggleVisible}
+              >
+                <FiMessageSquare className="size-3.5" />
+              </ChatHeaderIconButton>
+              <ChatHeaderIconButton
+                type="button"
+                label="Delete drawing"
+                className="hover:bg-destructive/10 hover:text-destructive"
+                title="Delete drawing"
+                onClick={() => void handleDelete()}
+              >
+                <FiTrash2 className="size-3.5" />
+              </ChatHeaderIconButton>
+              <ChatHeaderButton
+                type="button"
+                tone="outline"
+                aria-pressed={true}
+                title="Switch to chat view"
+                className="w-[5.5rem] gap-1.5"
+                onClick={props.onExitCanvasView}
+              >
+                <ChatBubbleIcon className="size-3.5" />
+                <span className="truncate font-normal">Chat</span>
+              </ChatHeaderButton>
+            </>
+          ) : null}
         </header>
-        <div className="relative min-h-0 flex-1" data-testid="excalidraw-canvas">
+        <div
+          ref={canvasContainerRef}
+          className="relative min-h-0 flex-1"
+          data-testid="excalidraw-canvas"
+          onPointerDownCapture={suspendAgentFollowing}
+          onWheelCapture={suspendAgentFollowing}
+        >
           {initialScene ? (
             <Excalidraw
               initialData={initialScene as never}
@@ -595,7 +1077,7 @@ export function CanvasWorkspaceView(props: {
                 excalidrawApiRef.current = api;
               }}
               onChange={handleSceneChange as never}
-              viewModeEnabled={agentEditing}
+              viewModeEnabled={canvasLocked}
               theme={resolvedTheme === "dark" ? "dark" : "light"}
               UIOptions={{ canvasActions: { loadScene: false } }}
             />
@@ -609,7 +1091,10 @@ export function CanvasWorkspaceView(props: {
 
       <ResizableChatPane
         controller={chatPane}
-        className="min-w-[20rem] max-w-[37.5rem] flex-col border-l border-border/65 bg-background"
+        className={cn(
+          "min-w-[20rem] max-w-[37.5rem] flex-col border-l border-border/65 bg-background",
+          immersive && "hidden",
+        )}
       >
         {props.chatPanel}
       </ResizableChatPane>

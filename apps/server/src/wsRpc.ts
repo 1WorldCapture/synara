@@ -16,6 +16,7 @@ import {
   type GitActionProgressEvent,
   type OrchestrationCommand,
   type CanvasDrawingChangedEvent,
+  type CanvasAgentPreviewEvent,
   type OrchestrationEvent,
   type ProjectDevServerEvent,
   type OrchestrationShellStreamEvent,
@@ -27,7 +28,18 @@ import {
   type ServerLifecycleStreamEvent,
 } from "@synara/contracts";
 import { clamp } from "effect/Number";
-import { Effect, FileSystem, Layer, Option, Path, Queue, Schema, Scope, Stream } from "effect";
+import {
+  Effect,
+  FileSystem,
+  Layer,
+  Option,
+  Path,
+  Queue,
+  Schema,
+  Scope,
+  Semaphore,
+  Stream,
+} from "effect";
 import { HttpRouter, HttpServerRequest, HttpServerResponse } from "effect/unstable/http";
 import { RpcMiddleware, RpcSchema, RpcSerialization, RpcServer } from "effect/unstable/rpc";
 
@@ -47,7 +59,11 @@ import {
   saveCanvasDrawing,
   trashCanvasDrawing,
 } from "./canvasDrawingFiles";
-import { subscribeCanvasDrawingChanges } from "./canvasBridge";
+import {
+  type CanvasBridgeDiagnostic,
+  subscribeCanvasAgentPreviews,
+  subscribeCanvasDrawingChanges,
+} from "./canvasBridge";
 import { SessionCredentialService } from "./auth/Services/SessionCredentialService";
 import { CheckpointDiffQuery } from "./checkpointing/Services/CheckpointDiffQuery";
 import { resolveThreadWorkspaceCwd } from "./checkpointing/Utils";
@@ -311,6 +327,16 @@ const makeWsRpcHandlersLayer = () =>
       const workspaceEntries = yield* WorkspaceEntries;
       const workspaceFileSystem = yield* WorkspaceFileSystem;
       const streamAdmission = yield* makeWsStreamAdmission;
+      const services = yield* Effect.services<never>();
+      const runFork = Effect.runForkWith(services);
+      const logCanvasPreviewDiagnostic = (diagnostic: CanvasBridgeDiagnostic) => {
+        runFork(
+          Effect.logInfo("canvas preview diagnostic", {
+            boundary: "effect-rpc",
+            ...diagnostic,
+          }),
+        );
+      };
 
       const isGlobalGitHubCliError = (error: unknown): error is GitHubCliError =>
         error instanceof GitHubCliError &&
@@ -891,6 +917,32 @@ const makeWsRpcHandlersLayer = () =>
                   Effect.runFork(Queue.offer(queue, event).pipe(Effect.asVoid));
                 },
               );
+              yield* Effect.addFinalizer(() => Effect.sync(unsubscribe));
+            }),
+          ),
+        [WS_METHODS.subscribeCanvasAgentPreviews]: () =>
+          Stream.callback((queue) =>
+            Effect.gen(function* () {
+              const unsubscribe = subscribeCanvasAgentPreviews((event: CanvasAgentPreviewEvent) => {
+                runFork(
+                  Queue.offer(queue, event).pipe(
+                    Effect.tap((offered) =>
+                      Effect.logInfo("canvas preview diagnostic", {
+                        boundary: "effect-rpc",
+                        stage: "rpc.enqueued",
+                        threadId: event.threadId,
+                        streamId: event.streamId,
+                        sequence: event.sequence,
+                        phase: event.phase,
+                        baseRevision: event.baseRevision,
+                        operationCount: event.operations.length,
+                        offered,
+                      }),
+                    ),
+                    Effect.asVoid,
+                  ),
+                );
+              }, logCanvasPreviewDiagnostic);
               yield* Effect.addFinalizer(() => Effect.sync(unsubscribe));
             }),
           ),

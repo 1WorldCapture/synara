@@ -1,4 +1,5 @@
 import type {
+  CanvasAgentPreviewEvent,
   CanvasDrawingCreateInput,
   CanvasDrawingChangedEvent,
   CanvasDrawingDeleteInput,
@@ -543,6 +544,7 @@ export interface NativeApi {
     saveDrawing: (input: CanvasDrawingSaveInput) => Promise<CanvasDrawingSnapshot>;
     deleteDrawing: (input: CanvasDrawingDeleteInput) => Promise<CanvasDrawingDeleteResult>;
     onDrawingChanged: (callback: (event: CanvasDrawingChangedEvent) => void) => () => void;
+    onAgentPreview: (callback: (event: CanvasAgentPreviewEvent) => void) => () => void;
   };
   filesystem: {
     browse: (input: FilesystemBrowseInput) => Promise<FilesystemBrowseResult>;

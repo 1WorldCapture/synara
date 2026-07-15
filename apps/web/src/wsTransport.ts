@@ -21,6 +21,7 @@ import {
   WsFeatureRpcGroup,
   type AutomationStreamEvent,
   type CanvasDrawingChangedEvent,
+  type CanvasAgentPreviewEvent,
   type GitActionProgressEvent,
   type GitRunStackedActionResult,
   type OrchestrationEvent,
@@ -42,6 +43,7 @@ import { RpcClient, RpcSerialization } from "effect/unstable/rpc";
 import * as Socket from "effect/unstable/socket/Socket";
 
 import { APP_VERSION } from "./branding";
+import { logCanvasDiagnostic } from "./lib/canvasDiagnostics";
 import type { WsTransportState } from "./wsTransportEvents";
 
 type PushListener<C extends WsPushChannel> = (message: WsPushMessage<C>) => void;
@@ -634,7 +636,9 @@ export class WsTransport {
       channel,
       data,
     } as WsPush;
-    this.latestPushByChannel.set(channel, message);
+    if (channel !== WS_CHANNELS.canvasAgentPreview) {
+      this.latestPushByChannel.set(channel, message);
+    }
     const listeners = this.listeners.get(channel);
     if (!listeners) return;
     for (const listener of listeners) {
@@ -649,6 +653,7 @@ export class WsTransport {
   private startChannelStream(channel: WsPushChannel): void {
     void this.getClient()
       .then((client) => {
+        if (this.disposed || !this.listeners.has(channel)) return;
         const restartChannel = () => {
           if (this.listeners.has(channel)) {
             this.startChannelStream(channel);
@@ -710,10 +715,32 @@ export class WsTransport {
           );
         } else if (channel === WS_CHANNELS.canvasDrawingChanged) {
           this.startStream(
+            client,
             "canvas.drawingChanges",
             client[WS_METHODS.subscribeCanvasDrawingChanges]({}),
             (event: CanvasDrawingChangedEvent) =>
               this.emit(WS_CHANNELS.canvasDrawingChanged, event),
+            restartChannel,
+          );
+        } else if (channel === WS_CHANNELS.canvasAgentPreview) {
+          logCanvasDiagnostic("transport.subscription-starting", {
+            channel: WS_CHANNELS.canvasAgentPreview,
+          });
+          this.startStream(
+            client,
+            "canvas.agentPreviews",
+            client[WS_METHODS.subscribeCanvasAgentPreviews]({}),
+            (event: CanvasAgentPreviewEvent) => {
+              logCanvasDiagnostic("transport.event-received", {
+                threadId: event.threadId,
+                streamId: event.streamId,
+                sequence: event.sequence,
+                phase: event.phase,
+                baseRevision: event.baseRevision,
+                operationCount: event.operations.length,
+              });
+              this.emit(WS_CHANNELS.canvasAgentPreview, event);
+            },
             restartChannel,
           );
         } else if (channel === WS_CHANNELS.automationEvent) {
@@ -757,6 +784,8 @@ export class WsTransport {
     else if (channel === WS_CHANNELS.projectDevServerEvent) this.stopStream("project.devServers");
     else if (channel === WS_CHANNELS.canvasDrawingChanged)
       this.stopStream("canvas.drawingChanges");
+    else if (channel === WS_CHANNELS.canvasAgentPreview)
+      this.stopStream("canvas.agentPreviews");
     else if (channel === WS_CHANNELS.automationEvent) this.stopStream("automation.events");
     else if (channel === ORCHESTRATION_WS_CHANNELS.domainEvent)
       this.stopStream("orchestration.domain");
@@ -861,6 +890,14 @@ export class WsTransport {
           const wasReplacedOrStopped = this.streamCleanups.get(key) !== cancel;
           if (!wasReplacedOrStopped) {
             this.streamCleanups.delete(key);
+          }
+          if (key === "canvas.agentPreviews") {
+            logCanvasDiagnostic("transport.subscription-exited", {
+              intentional: wasReplacedOrStopped,
+              disposed: this.disposed,
+              success: Exit.isSuccess(exit),
+              interrupted: Exit.isFailure(exit) && Cause.hasInterruptsOnly(exit.cause),
+            });
           }
           if (wasReplacedOrStopped || this.disposed) {
             return;

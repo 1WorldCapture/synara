@@ -1,8 +1,14 @@
 import { createHash, randomBytes, timingSafeEqual } from "node:crypto";
 import { createServer } from "node:http";
 
-import type { CanvasDrawingChangedEvent, CanvasDrawingRef } from "@synara/contracts";
+import {
+  CanvasAgentPreviewEvent,
+  type CanvasAgentPreviewEvent as CanvasAgentPreviewEventType,
+  type CanvasDrawingChangedEvent,
+  type CanvasDrawingRef,
+} from "@synara/contracts";
 import { MAX_CANVAS_SCENE_BYTES } from "@synara/shared/excalidrawScene";
+import { Schema } from "effect";
 
 import {
   CanvasDrawingConflictError,
@@ -13,6 +19,62 @@ import {
 const CAPABILITY_TTL_MS = 12 * 60 * 60 * 1_000;
 const MAX_CAPABILITIES = 256;
 const MAX_BRIDGE_REQUEST_BYTES = MAX_CANVAS_SCENE_BYTES + 64 * 1024;
+const PREVIEW_TTL_MS = 2 * 60 * 1_000;
+const MAX_ACTIVE_PREVIEW_STREAMS = 32;
+const MAX_PREVIEW_STREAM_BYTES = MAX_CANVAS_SCENE_BYTES + 64 * 1024;
+const MAX_PREVIEW_REPLAY_BYTES = 32 * 1024 * 1024;
+
+export interface CanvasBridgeDiagnostic {
+  readonly stage:
+    | "bridge.accepted"
+    | "bridge.invalid"
+    | "bridge.listener-failed"
+    | "bridge.rejected"
+    | "rpc.replayed"
+    | "rpc.subscriber-attached"
+    | "rpc.subscriber-detached";
+  readonly threadId?: string;
+  readonly streamId?: string;
+  readonly sequence?: number;
+  readonly phase?: CanvasAgentPreviewEventType["phase"];
+  readonly baseRevision?: string;
+  readonly operationCount?: number;
+  readonly listenerCount?: number;
+  readonly replayEventCount?: number;
+  readonly currentStreamId?: string;
+  readonly currentSequence?: number;
+  readonly expectedSequence?: number;
+  readonly reason?:
+    | "invalid-payload"
+    | "listener-threw"
+    | "missing-stream-start"
+    | "sequence-gap"
+    | "stream-mismatch";
+}
+
+export type CanvasBridgeDiagnosticListener = (event: CanvasBridgeDiagnostic) => void;
+
+function emitCanvasBridgeDiagnostic(
+  listener: CanvasBridgeDiagnosticListener | undefined,
+  event: CanvasBridgeDiagnostic,
+): void {
+  try {
+    listener?.(event);
+  } catch {
+    // Diagnostics must never affect drawing delivery.
+  }
+}
+
+function previewDiagnosticFields(event: CanvasAgentPreviewEventType) {
+  return {
+    threadId: event.threadId,
+    streamId: event.streamId,
+    sequence: event.sequence,
+    phase: event.phase,
+    baseRevision: event.baseRevision,
+    operationCount: event.operations.length,
+  } satisfies Partial<CanvasBridgeDiagnostic>;
+}
 
 interface CanvasBridgeGrant extends CanvasDrawingRef {
   expiresAt: number;
@@ -20,6 +82,18 @@ interface CanvasBridgeGrant extends CanvasDrawingRef {
 
 const grants = new Map<string, CanvasBridgeGrant>();
 const drawingChangedListeners = new Set<(event: CanvasDrawingChangedEvent) => void>();
+const agentPreviewListeners = new Set<(event: CanvasAgentPreviewEventType) => void>();
+const agentPreviewStates = new Map<
+  string,
+  {
+    readonly streamId: string;
+    readonly sequence: number;
+    readonly replayable: boolean;
+    readonly expiresAt: number;
+    readonly events: CanvasAgentPreviewEventType[];
+    readonly byteLength: number;
+  }
+>();
 
 function publishCanvasDrawingChanged(event: CanvasDrawingChangedEvent): void {
   for (const listener of drawingChangedListeners) {
@@ -36,6 +110,157 @@ export function subscribeCanvasDrawingChanges(
 ): () => void {
   drawingChangedListeners.add(listener);
   return () => drawingChangedListeners.delete(listener);
+}
+
+function pruneAgentPreviews(now = Date.now()): void {
+  for (const [threadId, state] of agentPreviewStates) {
+    if (state.expiresAt <= now) agentPreviewStates.delete(threadId);
+  }
+}
+
+function trimAgentPreviewReplayBuffers(): void {
+  while (agentPreviewStates.size > MAX_ACTIVE_PREVIEW_STREAMS) {
+    const oldest = agentPreviewStates.keys().next().value;
+    if (oldest === undefined) break;
+    agentPreviewStates.delete(oldest);
+  }
+  let totalBytes = [...agentPreviewStates.values()].reduce(
+    (total, state) => total + state.byteLength,
+    0,
+  );
+  if (totalBytes <= MAX_PREVIEW_REPLAY_BYTES) return;
+  for (const [threadId, state] of agentPreviewStates) {
+    if (state.byteLength === 0) continue;
+    totalBytes -= state.byteLength;
+    agentPreviewStates.set(threadId, {
+      ...state,
+      replayable: false,
+      events: [],
+      byteLength: 0,
+    });
+    if (totalBytes <= MAX_PREVIEW_REPLAY_BYTES) break;
+  }
+}
+
+function publishCanvasAgentPreview(
+  event: CanvasAgentPreviewEventType,
+  onDiagnostic?: CanvasBridgeDiagnosticListener,
+): void {
+  pruneAgentPreviews();
+  const current = agentPreviewStates.get(event.threadId);
+  if (!current && (event.phase !== "start" || event.sequence !== 0)) {
+    emitCanvasBridgeDiagnostic(onDiagnostic, {
+      stage: "bridge.rejected",
+      ...previewDiagnosticFields(event),
+      expectedSequence: 0,
+      reason: "missing-stream-start",
+    });
+    return;
+  }
+  if (current) {
+    if (current.streamId === event.streamId) {
+      if (event.sequence !== current.sequence + 1) {
+        emitCanvasBridgeDiagnostic(onDiagnostic, {
+          stage: "bridge.rejected",
+          ...previewDiagnosticFields(event),
+          currentStreamId: current.streamId,
+          currentSequence: current.sequence,
+          expectedSequence: current.sequence + 1,
+          reason: "sequence-gap",
+        });
+        return;
+      }
+    } else if (event.phase !== "start" || event.sequence !== 0) {
+      emitCanvasBridgeDiagnostic(onDiagnostic, {
+        stage: "bridge.rejected",
+        ...previewDiagnosticFields(event),
+        currentStreamId: current.streamId,
+        currentSequence: current.sequence,
+        expectedSequence: 0,
+        reason: "stream-mismatch",
+      });
+      return;
+    }
+  }
+  const terminal = event.phase === "complete" || event.phase === "cancelled";
+  const encodedBytes = Buffer.byteLength(JSON.stringify(event));
+  const replayable = !terminal && (current?.streamId !== event.streamId || current.replayable);
+  let bufferedEvents: CanvasAgentPreviewEventType[] = [];
+  if (replayable) {
+    if (current?.streamId === event.streamId) {
+      bufferedEvents = current.events;
+      bufferedEvents.push(event);
+    } else {
+      bufferedEvents = [event];
+    }
+  }
+  const bufferedBytes = terminal
+    ? 0
+    : current?.streamId === event.streamId && replayable
+      ? current.byteLength + encodedBytes
+      : replayable
+        ? encodedBytes
+        : 0;
+  const withinReplayLimit = replayable && bufferedBytes <= MAX_PREVIEW_STREAM_BYTES;
+  agentPreviewStates.delete(event.threadId);
+  if (!terminal) {
+    agentPreviewStates.set(event.threadId, {
+      streamId: event.streamId,
+      sequence: event.sequence,
+      replayable: withinReplayLimit,
+      expiresAt: Date.now() + PREVIEW_TTL_MS,
+      events: withinReplayLimit ? bufferedEvents : [],
+      byteLength: withinReplayLimit ? bufferedBytes : 0,
+    });
+  }
+  trimAgentPreviewReplayBuffers();
+  emitCanvasBridgeDiagnostic(onDiagnostic, {
+    stage: "bridge.accepted",
+    ...previewDiagnosticFields(event),
+    listenerCount: agentPreviewListeners.size,
+  });
+  for (const listener of agentPreviewListeners) {
+    try {
+      listener(event);
+    } catch {
+      emitCanvasBridgeDiagnostic(onDiagnostic, {
+        stage: "bridge.listener-failed",
+        ...previewDiagnosticFields(event),
+        listenerCount: agentPreviewListeners.size,
+        reason: "listener-threw",
+      });
+      // One renderer subscriber must not fail an agent preview.
+    }
+  }
+}
+
+export function subscribeCanvasAgentPreviews(
+  listener: (event: CanvasAgentPreviewEventType) => void,
+  onDiagnostic?: CanvasBridgeDiagnosticListener,
+): () => void {
+  pruneAgentPreviews();
+  agentPreviewListeners.add(listener);
+  const replayEvents = [...agentPreviewStates.values()].flatMap((state) => state.events);
+  emitCanvasBridgeDiagnostic(onDiagnostic, {
+    stage: "rpc.subscriber-attached",
+    listenerCount: agentPreviewListeners.size,
+    replayEventCount: replayEvents.length,
+  });
+  for (const event of replayEvents) {
+    emitCanvasBridgeDiagnostic(onDiagnostic, {
+      stage: "rpc.replayed",
+      ...previewDiagnosticFields(event),
+      listenerCount: agentPreviewListeners.size,
+    });
+    listener(event);
+  }
+  return () => {
+    agentPreviewListeners.delete(listener);
+    emitCanvasBridgeDiagnostic(onDiagnostic, {
+      stage: "rpc.subscriber-detached",
+      listenerCount: agentPreviewListeners.size,
+    });
+  };
 }
 
 function tokenKey(token: string): string {
@@ -85,6 +310,19 @@ export function authorizeCanvasBridgeCapability(
 export function resetCanvasBridgeCapabilitiesForTest(): void {
   grants.clear();
   drawingChangedListeners.clear();
+  agentPreviewListeners.clear();
+  agentPreviewStates.clear();
+}
+
+function parseCanvasAgentPreview(
+  record: Record<string, unknown>,
+  threadId: CanvasDrawingRef["threadId"],
+): CanvasAgentPreviewEventType | null {
+  try {
+    return Schema.decodeUnknownSync(CanvasAgentPreviewEvent)({ ...record, threadId });
+  } catch {
+    return null;
+  }
 }
 
 function isLoopbackAddress(address: string | undefined): boolean {
@@ -119,7 +357,9 @@ export interface CanvasBridgeServer {
   readonly close: () => Promise<void>;
 }
 
-export function startCanvasBridgeServer(): Promise<CanvasBridgeServer> {
+export function startCanvasBridgeServer(options?: {
+  readonly onDiagnostic?: CanvasBridgeDiagnosticListener;
+}): Promise<CanvasBridgeServer> {
   return new Promise((resolve, reject) => {
     const server = createServer(async (request, response) => {
       if (!isLoopbackAddress(request.socket.remoteAddress)) {
@@ -166,6 +406,21 @@ export function startCanvasBridgeServer(): Promise<CanvasBridgeServer> {
             revision: snapshot.revision,
           });
           sendJson(response, 200, snapshot);
+          return;
+        }
+        if (request.url === "/internal/canvas/preview") {
+          const event = parseCanvasAgentPreview(record, drawing.threadId);
+          if (!event) {
+            emitCanvasBridgeDiagnostic(options?.onDiagnostic, {
+              stage: "bridge.invalid",
+              threadId: drawing.threadId,
+              reason: "invalid-payload",
+            });
+            response.writeHead(400).end("Bad Request");
+            return;
+          }
+          publishCanvasAgentPreview(event, options?.onDiagnostic);
+          response.writeHead(202).end();
           return;
         }
         response.writeHead(404).end("Not Found");

@@ -346,6 +346,7 @@ describe("wsNativeApi", () => {
     const onDomainEvent = vi.fn();
     const onActionProgress = vi.fn();
     const onDrawingChanged = vi.fn();
+    const onAgentPreview = vi.fn();
 
     api.terminal.onEvent(onTerminalEvent);
     expect(channelListeners.has(ORCHESTRATION_WS_CHANNELS.domainEvent)).toBe(false);
@@ -353,6 +354,7 @@ describe("wsNativeApi", () => {
     expect(channelListeners.get(ORCHESTRATION_WS_CHANNELS.domainEvent)?.size).toBe(1);
     api.git.onActionProgress(onActionProgress);
     api.canvas.onDrawingChanged(onDrawingChanged);
+    api.canvas.onAgentPreview(onAgentPreview);
 
     const terminalEvent = {
       threadId: "thread-1",
@@ -367,6 +369,15 @@ describe("wsNativeApi", () => {
       revision: "revision-2",
     };
     emitPush(WS_CHANNELS.canvasDrawingChanged, drawingChangedEvent);
+    const previewEvent = {
+      threadId: ThreadId.makeUnsafe("drawing-1"),
+      streamId: "stream-1",
+      sequence: 1,
+      phase: "partial" as const,
+      baseRevision: "revision-1",
+      operations: [{ id: "box-1", type: "rectangle" }],
+    };
+    emitPush(WS_CHANNELS.canvasAgentPreview, previewEvent);
 
     const orchestrationEvent = {
       sequence: 1,
@@ -403,6 +414,7 @@ describe("wsNativeApi", () => {
     expect(onTerminalEvent).toHaveBeenCalledTimes(1);
     expect(onTerminalEvent).toHaveBeenCalledWith(terminalEvent);
     expect(onDrawingChanged).toHaveBeenCalledWith(drawingChangedEvent);
+    expect(onAgentPreview).toHaveBeenCalledWith(previewEvent);
     expect(onDomainEvent).toHaveBeenCalledTimes(1);
     expect(onDomainEvent).toHaveBeenCalledWith(orchestrationEvent);
     unsubscribeDomainEvent();

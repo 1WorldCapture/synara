@@ -3260,10 +3260,15 @@ function applyThreadMessageSentEvent(thread: Thread, event: ThreadMessageSentEve
     (thread.latestTurn === null || thread.latestTurn.turnId === payload.turnId)
   ) {
     const previousTurn = thread.latestTurn;
+    // A finalized assistant message can be interim commentary before tool work;
+    // the matching active session remains authoritative for the turn lifecycle.
+    const sessionStillRunsTurn =
+      isSessionRunningTurn(thread.session) && thread.session.activeTurnId === payload.turnId;
+    const turnStillRunning = payload.streaming || sessionStillRunsTurn;
     latestTurn = buildLatestTurn({
       previous: previousTurn,
       turnId: payload.turnId,
-      state: payload.streaming
+      state: turnStillRunning
         ? "running"
         : previousTurn?.state === "interrupted"
           ? "interrupted"
@@ -3272,7 +3277,7 @@ function applyThreadMessageSentEvent(thread: Thread, event: ThreadMessageSentEve
             : "completed",
       requestedAt: previousTurn?.requestedAt ?? payload.createdAt,
       startedAt: previousTurn?.startedAt ?? payload.createdAt,
-      completedAt: payload.streaming ? (previousTurn?.completedAt ?? null) : payload.updatedAt,
+      completedAt: turnStillRunning ? null : payload.updatedAt,
       assistantMessageId: payload.messageId,
       sourceProposedPlan: thread.pendingSourceProposedPlan,
     });

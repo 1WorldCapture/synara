@@ -1151,6 +1151,57 @@ describe("store pure functions", () => {
     ]);
   });
 
+  it("keeps the active turn running when an interim assistant message stops streaming", () => {
+    const turnId = TurnId.makeUnsafe("turn-with-interim-commentary");
+    const assistantId = MessageId.makeUnsafe("assistant-interim-commentary");
+    const initialState = makeState(
+      makeThread({
+        session: {
+          provider: "codex",
+          status: "running",
+          orchestrationStatus: "running",
+          activeTurnId: turnId,
+          createdAt: "2026-02-27T00:01:00.000Z",
+          updatedAt: "2026-02-27T00:01:05.000Z",
+        },
+        latestTurn: {
+          turnId,
+          state: "running",
+          requestedAt: "2026-02-27T00:01:00.000Z",
+          startedAt: "2026-02-27T00:01:01.000Z",
+          completedAt: null,
+          assistantMessageId: null,
+        },
+      }),
+    );
+
+    const next = applyOrchestrationEvents(initialState, [
+      makeDomainEvent("thread.message-sent", {
+        threadId: ThreadId.makeUnsafe("thread-1"),
+        messageId: assistantId,
+        role: "assistant",
+        text: "I will inspect the canvas before drawing.",
+        turnId,
+        streaming: false,
+        createdAt: "2026-02-27T00:01:06.000Z",
+        updatedAt: "2026-02-27T00:01:07.000Z",
+        attachments: [],
+        source: "native",
+      }),
+    ]);
+
+    expect(next.threads[0]?.messages.at(-1)).toMatchObject({
+      id: assistantId,
+      streaming: false,
+    });
+    expect(next.threads[0]?.latestTurn).toMatchObject({
+      turnId,
+      state: "running",
+      completedAt: null,
+      assistantMessageId: assistantId,
+    });
+  });
+
   it("replaces a non-streaming user message when an active-tail edit reuses its message id", () => {
     const userId = MessageId.makeUnsafe("user-active-edit");
     const initialState = makeState(

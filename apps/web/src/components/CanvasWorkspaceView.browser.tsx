@@ -4,7 +4,9 @@ import {
   type CanvasDrawingSaveInput,
   type CanvasDrawingSnapshot,
   type NativeApi,
+  type OrchestrationEvent,
   EventId,
+  MessageId,
   ProjectId,
   ThreadId,
   TurnId,
@@ -39,7 +41,18 @@ vi.mock("@excalidraw/excalidraw", async (importOriginal) => {
       onChange?: (elements: readonly unknown[], appState: unknown, files: unknown) => void;
     }) => {
       excalidrawOnChangeRef.current = props.onChange;
-      props.excalidrawAPI?.({ addFiles: addFilesMock, updateScene: updateSceneMock });
+      props.excalidrawAPI?.({
+        addFiles: addFilesMock,
+        updateScene: updateSceneMock,
+        getAppState: () => ({
+          width: 1200,
+          height: 800,
+          scrollX: 0,
+          scrollY: 0,
+          zoom: { value: 1 },
+        }),
+        refresh: vi.fn(),
+      });
       return <div data-testid="excalidraw-test-double" />;
     },
   };
@@ -141,6 +154,12 @@ describe("CanvasWorkspaceView", () => {
         },
       },
       sidebarThreadSummaryById: {},
+      threadSessionById: {},
+      threadTurnStateById: {},
+      messageIdsByThreadId: {},
+      messageByThreadId: {},
+      activityIdsByThreadId: {},
+      activityByThreadId: {},
       threadsHydrated: true,
     });
 
@@ -154,6 +173,7 @@ describe("CanvasWorkspaceView", () => {
           deleteDrawing: vi.fn(async () => ({ deleted: true })),
           createDrawing: vi.fn(async () => snapshot),
           onDrawingChanged: vi.fn(() => () => undefined),
+          onAgentPreview: vi.fn(() => () => undefined),
         },
         orchestration: {
           dispatchCommand: vi.fn(async () => ({ sequence: 1 })),
@@ -221,6 +241,303 @@ describe("CanvasWorkspaceView", () => {
 
       await page.getByRole("button", { name: "Show chat panel" }).click();
       await expect.element(page.getByText("Persistent Chat")).toBeVisible();
+    } finally {
+      await screen.unmount();
+    }
+  });
+
+  it("renders ephemeral preview batches, yields camera control, and keeps one editor in full screen", async () => {
+    const snapshot = makeSnapshot();
+    const saveDrawing = vi.fn(async () => snapshot);
+    const dispatchCommand = vi.fn(async () => ({ sequence: 2 }));
+    let previewListener: Parameters<NativeApi["canvas"]["onAgentPreview"]>[0] | undefined;
+    Object.defineProperty(window, "nativeApi", {
+      configurable: true,
+      value: {
+        ...window.nativeApi,
+        canvas: {
+          ...window.nativeApi?.canvas,
+          saveDrawing,
+          onAgentPreview: (listener) => {
+            previewListener = listener;
+            return () => {
+              previewListener = undefined;
+            };
+          },
+        },
+        orchestration: { dispatchCommand },
+      } as NativeApi,
+    });
+
+    const screen = await render(
+      <div style={{ width: "1440px", height: "900px" }}>
+        <CanvasWorkspaceView
+          threadId={THREAD_ID}
+          projectId={PROJECT_ID}
+          projectName="Canvas Project"
+          chatPanel={<div>Persistent Chat</div>}
+          onExitCanvasView={vi.fn()}
+        />
+      </div>,
+    );
+
+    try {
+      await expect.element(page.getByText("Saved locally")).toBeInTheDocument();
+      expect(previewListener).toBeDefined();
+      const callsBeforePreview = updateSceneMock.mock.calls.length;
+      previewListener?.({
+        threadId: THREAD_ID,
+        streamId: "stream-1",
+        sequence: 0,
+        phase: "start",
+        baseRevision: "revision-1",
+        operations: [],
+      });
+      previewListener?.({
+        threadId: THREAD_ID,
+        streamId: "stream-1",
+        sequence: 1,
+        phase: "partial",
+        baseRevision: "revision-1",
+        operations: [
+          {
+            id: "preview-box",
+            type: "rectangle",
+            x: 100,
+            y: 120,
+            width: 300,
+            height: 160,
+            label: { text: "Streaming" },
+          },
+        ],
+        camera: { x: 60, y: 80, width: 640, height: 480, durationMs: 0 },
+      });
+      previewListener?.({
+        threadId: THREAD_ID,
+        streamId: "stream-1",
+        sequence: 2,
+        phase: "partial",
+        baseRevision: "revision-1",
+        operations: [
+          { id: "preview-detail", type: "ellipse", x: 440, y: 140, width: 80, height: 80 },
+        ],
+      });
+
+      await expect.element(page.getByText("AI is drawing · pan and zoom only")).toBeInTheDocument();
+      await vi.waitFor(() =>
+        expect(updateSceneMock).toHaveBeenCalledWith({
+          elements: expect.arrayContaining([
+            expect.objectContaining({ id: "preview-box" }),
+            expect.objectContaining({ id: "preview-detail" }),
+          ]),
+          captureUpdate: "NEVER",
+        }),
+      );
+      expect(
+        updateSceneMock.mock.calls
+          .slice(callsBeforePreview)
+          .filter(([update]) => update?.captureUpdate === "NEVER" && update.elements),
+      ).toHaveLength(1);
+      expect(saveDrawing).not.toHaveBeenCalled();
+
+      await page.getByTestId("excalidraw-canvas").click();
+      await expect.element(page.getByRole("button", { name: "Follow agent" })).toBeInTheDocument();
+      await page.getByRole("button", { name: "Take over" }).click();
+      expect(dispatchCommand).toHaveBeenCalledWith(
+        expect.objectContaining({
+          type: "thread.turn.interrupt",
+          threadId: THREAD_ID,
+        }),
+      );
+
+      await page.getByRole("button", { name: "Enter full screen" }).click();
+      await expect.element(page.getByTestId("canvas-workspace")).toHaveAttribute(
+        "data-immersive",
+        "true",
+      );
+      await expect.element(page.getByText("Persistent Chat")).not.toBeVisible();
+      await page.getByRole("button", { name: "Exit full screen" }).click();
+      await expect.element(page.getByTestId("canvas-workspace")).toHaveAttribute(
+        "data-immersive",
+        "false",
+      );
+
+      previewListener?.({
+        threadId: THREAD_ID,
+        streamId: "stream-1",
+        sequence: 3,
+        phase: "cancelled",
+        baseRevision: "revision-1",
+        operations: [],
+      });
+      await expect
+        .element(page.getByText("AI is drawing · pan and zoom only"))
+        .not.toBeInTheDocument();
+    } finally {
+      await screen.unmount();
+    }
+  });
+
+  it("keeps preview batches active across a non-streaming interim assistant message", async () => {
+    const turnId = TurnId.makeUnsafe("canvas-interim-commentary-turn");
+    const activityId = EventId.makeUnsafe("canvas-preview-tool-started");
+    const session = {
+      provider: "grok" as const,
+      status: "running" as const,
+      orchestrationStatus: "running" as const,
+      activeTurnId: turnId,
+      createdAt: NOW_ISO,
+      updatedAt: NOW_ISO,
+    };
+    const latestTurn = {
+      turnId,
+      state: "running" as const,
+      requestedAt: NOW_ISO,
+      startedAt: NOW_ISO,
+      completedAt: null,
+      assistantMessageId: null,
+    };
+    useStore.setState((state) => ({
+      threads: state.threads.map((thread) =>
+        thread.id === THREAD_ID ? { ...thread, session, latestTurn } : thread,
+      ),
+      threadSessionById: {
+        ...state.threadSessionById,
+        [THREAD_ID]: session,
+      },
+      threadTurnStateById: {
+        ...state.threadTurnStateById,
+        [THREAD_ID]: { latestTurn },
+      },
+      activityIdsByThreadId: {
+        ...state.activityIdsByThreadId,
+        [THREAD_ID]: [activityId],
+      },
+      activityByThreadId: {
+        ...state.activityByThreadId,
+        [THREAD_ID]: {
+          [activityId]: {
+            id: activityId,
+            tone: "tool",
+            kind: "tool.started",
+            summary: "begin_view started",
+            payload: { title: "begin_view" },
+            turnId,
+            createdAt: NOW_ISO,
+          },
+        },
+      },
+    }));
+
+    const readDrawing = vi.fn(async () => makeSnapshot());
+    let previewListener: Parameters<NativeApi["canvas"]["onAgentPreview"]>[0] | undefined;
+    Object.defineProperty(window, "nativeApi", {
+      configurable: true,
+      value: {
+        ...window.nativeApi,
+        canvas: {
+          ...window.nativeApi?.canvas,
+          readDrawing,
+          onAgentPreview: (listener) => {
+            previewListener = listener;
+            return () => {
+              previewListener = undefined;
+            };
+          },
+        },
+      } as NativeApi,
+    });
+
+    const screen = await render(
+      <div style={{ width: "1440px", height: "900px" }}>
+        <CanvasWorkspaceView
+          threadId={THREAD_ID}
+          projectId={PROJECT_ID}
+          projectName="Canvas Project"
+          chatPanel={<div>Persistent Chat</div>}
+          onExitCanvasView={vi.fn()}
+        />
+      </div>,
+    );
+
+    try {
+      await expect.element(page.getByText("Saved locally")).toBeInTheDocument();
+      expect(readDrawing).toHaveBeenCalledOnce();
+      expect(previewListener).toBeDefined();
+
+      previewListener?.({
+        threadId: THREAD_ID,
+        streamId: "stream-with-interim-commentary",
+        sequence: 0,
+        phase: "start",
+        baseRevision: "revision-1",
+        operations: [],
+      });
+      await expect.element(page.getByText("AI is drawing · pan and zoom only")).toBeInTheDocument();
+
+      useStore.getState().applyOrchestrationEvents([
+        {
+          type: "thread.message-sent",
+          sequence: 1,
+          eventId: EventId.makeUnsafe("interim-commentary-event"),
+          aggregateKind: "thread",
+          aggregateId: THREAD_ID,
+          occurredAt: "2026-07-14T00:00:01.000Z",
+          commandId: null,
+          causationEventId: null,
+          correlationId: null,
+          metadata: {},
+          payload: {
+            threadId: THREAD_ID,
+            messageId: MessageId.makeUnsafe("interim-commentary-message"),
+            role: "assistant",
+            text: "I will now append the next drawing batch.",
+            turnId,
+            streaming: false,
+            createdAt: "2026-07-14T00:00:01.000Z",
+            updatedAt: "2026-07-14T00:00:01.000Z",
+            attachments: [],
+            source: "native",
+          },
+        } satisfies Extract<OrchestrationEvent, { type: "thread.message-sent" }>,
+      ]);
+
+      await vi.waitFor(() =>
+        expect(useStore.getState().threadTurnStateById?.[THREAD_ID]?.latestTurn).toMatchObject({
+          turnId,
+          state: "running",
+          completedAt: null,
+        }),
+      );
+      previewListener?.({
+        threadId: THREAD_ID,
+        streamId: "stream-with-interim-commentary",
+        sequence: 1,
+        phase: "partial",
+        baseRevision: "revision-1",
+        operations: [
+          {
+            id: "preview-after-commentary",
+            type: "rectangle",
+            x: 100,
+            y: 120,
+            width: 300,
+            height: 160,
+            label: { text: "Still streaming" },
+          },
+        ],
+      });
+
+      await vi.waitFor(() =>
+        expect(updateSceneMock).toHaveBeenCalledWith({
+          elements: expect.arrayContaining([
+            expect.objectContaining({ id: "preview-after-commentary" }),
+          ]),
+          captureUpdate: "NEVER",
+        }),
+      );
+      await expect.element(page.getByText("AI is drawing · pan and zoom only")).toBeInTheDocument();
+      expect(readDrawing).toHaveBeenCalledOnce();
     } finally {
       await screen.unmount();
     }
@@ -326,6 +643,7 @@ describe("CanvasWorkspaceView", () => {
 
     try {
       await expect.element(page.getByText("Saved locally")).toBeInTheDocument();
+      await new Promise<void>((resolve) => requestAnimationFrame(() => resolve()));
       excalidrawOnChangeRef.current?.([], { zoom: { value: 2 } }, {});
       snapshot = { ...snapshot, revision: "revision-2" };
 
@@ -452,10 +770,8 @@ describe("CanvasWorkspaceView", () => {
       drawingChangedListener?.({ threadId: THREAD_ID, revision: "revision-3" });
       drawingChangedListener?.({ threadId: THREAD_ID, revision: "revision-4" });
       await vi.waitFor(() => expect(readDrawing.mock.calls.length).toBeGreaterThan(1));
-      expect(saveDrawing).not.toHaveBeenCalled();
       await vi.waitFor(() =>
         expect(updateSceneMock).toHaveBeenCalledWith({
-          appState: expect.any(Object),
           elements: expect.arrayContaining([
             expect.objectContaining({ id: "agent-element" }),
           ]),
@@ -504,12 +820,13 @@ describe("CanvasWorkspaceView", () => {
           [THREAD_ID]: {},
         },
       }));
-      await vi.waitFor(() =>
-        expect(readDrawing.mock.calls.length).toBeGreaterThanOrEqual(liveReadCount + 2),
+      await vi.waitFor(
+        () => expect(readDrawing.mock.calls.length).toBeGreaterThanOrEqual(liveReadCount + 2),
+        { timeout: 2_500 },
       );
+      expect(saveDrawing).not.toHaveBeenCalled();
       await vi.waitFor(() =>
         expect(updateSceneMock).toHaveBeenCalledWith({
-          appState: expect.any(Object),
           elements: expect.arrayContaining([
             expect.objectContaining({ id: "final-agent-element" }),
           ]),

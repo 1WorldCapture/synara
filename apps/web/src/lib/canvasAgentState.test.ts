@@ -144,4 +144,30 @@ describe("isCanvasAgentEditing", () => {
       }),
     ).toBe(turnId);
   });
+
+  it("locks as soon as a chunked drawing preview begins", () => {
+    expect(
+      isCanvasAgentEditing({
+        latestTurn: {
+          turnId,
+          state: "running",
+          requestedAt: "2026-07-14T00:00:00.000Z",
+          startedAt: "2026-07-14T00:00:00.000Z",
+          completedAt: null,
+          assistantMessageId: null,
+        },
+        activities: [
+          {
+            id: EventId.makeUnsafe("event-begin-view"),
+            tone: "tool",
+            kind: "tool.started",
+            summary: "begin_view started",
+            payload: { title: "begin_view" },
+            turnId,
+            createdAt: "2026-07-14T00:00:00.000Z",
+          },
+        ],
+      }),
+    ).toBe(true);
+  });
 });

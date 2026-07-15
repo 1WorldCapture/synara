@@ -2,6 +2,7 @@ import { assert, describe, it } from "@effect/vitest";
 import { Effect, Exit, Schema } from "effect";
 import * as Rpc from "effect/unstable/rpc/Rpc";
 
+import { CanvasAgentPreviewEvent } from "./canvas";
 import { WsCanvasReadDrawingRpc } from "./rpc";
 
 describe("Canvas RPC contracts", () => {
@@ -45,6 +46,27 @@ describe("Canvas RPC contracts", () => {
       const decoded = yield* Schema.decodeUnknownEffect(codec)(wire);
       assert.strictEqual(decoded._tag, "Success");
       assert.deepStrictEqual(decoded.value, snapshot);
+    }),
+  );
+
+  it.effect("preserves ephemeral agent previews through the RPC JSON codec", () =>
+    Effect.gen(function* () {
+      const codec = Schema.toCodecJson(CanvasAgentPreviewEvent);
+      const preview = {
+        threadId: "drawing-1",
+        streamId: "stream-1",
+        sequence: 2,
+        phase: "partial" as const,
+        baseRevision: "revision-1",
+        operations: [{ id: "box-1", type: "rectangle", x: 80, y: 120 }],
+        camera: { x: 40, y: 60, width: 640, height: 480, durationMs: 500 },
+      };
+
+      const wire = yield* Schema.encodeEffect(codec)(preview);
+      assert.deepStrictEqual(wire, preview);
+
+      const decoded = yield* Schema.decodeUnknownEffect(codec)(wire);
+      assert.deepStrictEqual(decoded, preview);
     }),
   );
 });

@@ -62,6 +62,7 @@ import {
 import { CheckpointStore } from "../../checkpointing/Services/CheckpointStore.ts";
 import { wrapCanvasAgentContext } from "../../canvasAgentContext.ts";
 import {
+  type CanvasBridgeDiagnostic,
   issueCanvasBridgeCapability,
   revokeCanvasBridgeCapability,
   startCanvasBridgeServer,
@@ -346,8 +347,20 @@ const make = Effect.gen(function* () {
   const serverSettings = yield* ServerSettingsService;
   const managedAttachments = yield* ManagedAttachmentRepository;
   const serverConfig = yield* ServerConfig;
+  const services = yield* Effect.services<never>();
+  const runFork = Effect.runForkWith(services);
+  const logCanvasBridgeDiagnostic = (diagnostic: CanvasBridgeDiagnostic) => {
+    runFork(
+      Effect.logInfo("canvas preview diagnostic", {
+        boundary: "canvas-bridge",
+        ...diagnostic,
+      }),
+    );
+  };
   const canvasBridgeServer = yield* Effect.acquireRelease(
-    Effect.tryPromise(() => startCanvasBridgeServer()),
+    Effect.tryPromise(() =>
+      startCanvasBridgeServer({ onDiagnostic: logCanvasBridgeDiagnostic }),
+    ),
     (server) => Effect.promise(() => server.close()).pipe(Effect.catch(() => Effect.void)),
   );
   const handledTurnStartKeys = yield* Cache.make<string, true>({
