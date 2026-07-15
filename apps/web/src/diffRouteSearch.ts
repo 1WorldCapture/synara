@@ -8,7 +8,7 @@ export type ChatRightPanel = "browser" | "diff";
 
 export interface DiffRouteSearch {
   splitViewId?: string | undefined;
-  view?: "editor" | "canvas" | "chat" | undefined;
+  view?: "editor" | "chat" | undefined;
   editorFilePath?: string | undefined;
   panel?: ChatRightPanel | undefined;
   diff?: "1" | undefined;
@@ -16,11 +16,8 @@ export interface DiffRouteSearch {
   diffFilePath?: string | undefined;
 }
 
-export function isDedicatedWorkspaceView(view: unknown, threadSurface?: unknown): boolean {
-  if (view === "chat") return false;
-  // Existing Canvas threads can be opened through generic thread activation, which does not
-  // guarantee a `view=canvas` search value. The persisted surface remains authoritative there.
-  return view === "editor" || view === "canvas" || threadSurface === "canvas";
+export function isDedicatedWorkspaceView(view: unknown): boolean {
+  return view === "editor";
 }
 
 function isDiffOpenValue(value: unknown): boolean {
@@ -51,8 +48,7 @@ export function stripDiffSearchParams<T extends Record<string, unknown>>(
 export function parseDiffRouteSearch(search: Record<string, unknown>): DiffRouteSearch {
   const splitViewId = normalizeSearchString(search.splitViewId);
   const viewRaw = normalizeSearchString(search.view);
-  const view =
-    viewRaw === "editor" || viewRaw === "canvas" || viewRaw === "chat" ? viewRaw : undefined;
+  const view = viewRaw === "editor" || viewRaw === "chat" ? viewRaw : undefined;
   const editorFilePath = view === "editor" ? normalizeSearchString(search.editorFilePath) : undefined;
   const panelRaw = normalizeSearchString(search.panel);
   const panel: ChatRightPanel | undefined =

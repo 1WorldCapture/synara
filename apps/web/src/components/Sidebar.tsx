@@ -179,7 +179,6 @@ import { SidebarLeadingControls } from "./SidebarHeaderNavigationControls";
 import { ProjectSidebarIcon } from "./ProjectSidebarIcon";
 import { ThreadHoverCardContent } from "./ThreadHoverCardContent";
 import { ProjectHoverCardContent } from "./ProjectHoverCardContent";
-import { SidebarThreadSurfaceIcon } from "./SidebarThreadSurfaceIcon";
 import {
   SIDEBAR_HOVER_CARD_POPUP_PROPS,
   SIDEBAR_HOVER_CARD_SURFACE_CLASS_NAME,
@@ -208,9 +207,7 @@ import {
   type SidebarSearchPaletteMode,
 } from "./SidebarSearchPalette";
 import { useHandleNewChat } from "../hooks/useHandleNewChat";
-import { useHandleNewCanvasDrawing } from "../hooks/useHandleNewCanvasDrawing";
 import { useHandleNewStudioChat } from "../hooks/useHandleNewStudioChat";
-import { useHandleNewStudioCanvas } from "../hooks/useHandleNewStudioCanvas";
 import { useHandleNewThread } from "../hooks/useHandleNewThread";
 import { useThreadHandoff } from "../hooks/useThreadHandoff";
 import { useFeedbackDialogStore } from "../feedbackDialogStore";
@@ -1477,10 +1474,8 @@ export default function Sidebar() {
   const studioSectionVisible = appSettings.showStudioSection;
   const workspaceSectionVisible = appSettings.showWorkspaceSection;
   const { handleNewThread } = useHandleNewThread();
-  const { handleNewCanvasDrawing } = useHandleNewCanvasDrawing();
   const { handleNewChat } = useHandleNewChat();
   const { handleNewStudioChat } = useHandleNewStudioChat();
-  const { handleNewStudioCanvas } = useHandleNewStudioCanvas();
   const { createThreadHandoff } = useThreadHandoff();
   const routeThreadId = useParams({
     strict: false,
@@ -2565,9 +2560,6 @@ export default function Sidebar() {
   const handleCreateStudioChat = useCallback(async () => {
     await handleNewStudioChat({ fresh: true });
   }, [handleNewStudioChat]);
-  const handleCreateStudioCanvas = useCallback(async () => {
-    await handleNewStudioCanvas();
-  }, [handleNewStudioCanvas]);
 
   const beginWorkspaceRename = useCallback((workspaceId: string, title: string) => {
     setRenamingWorkspaceId(workspaceId);
@@ -5363,7 +5355,6 @@ export default function Sidebar() {
                 terminalCount={terminalCount}
               />
             ) : null}
-            <SidebarThreadSurfaceIcon surface={thread.surface} isActive={isActive} />
             <div className="flex min-w-0 flex-1 items-center gap-1.5 text-left">
               <span
                 className={cn(
@@ -5623,7 +5614,6 @@ export default function Sidebar() {
                 terminalCount={terminalCount}
               />
             ) : null}
-            <SidebarThreadSurfaceIcon surface={thread.surface} isActive={isActive} />
             <div
               className={cn(
                 "flex min-w-0 flex-1 items-center text-left",
@@ -5931,22 +5921,6 @@ export default function Sidebar() {
                     }),
                     entryPoint: "terminal",
                   });
-                }}
-              />
-              <SidebarIconButton
-                icon={PencilIcon}
-                label={`Create new drawing in ${project.name}`}
-                tooltip={
-                  newCanvasDrawingShortcutLabel
-                    ? `New AI drawing (${newCanvasDrawingShortcutLabel})`
-                    : "New AI drawing"
-                }
-                tooltipSide="top"
-                data-testid="new-canvas-drawing-button"
-                onClick={(event) => {
-                  event.preventDefault();
-                  event.stopPropagation();
-                  void handleNewCanvasDrawing(project.id);
                 }}
               />
               <SidebarIconButton
@@ -6394,10 +6368,6 @@ export default function Sidebar() {
     shortcutLabelForCommand(keybindings, "chat.newChat") ??
     shortcutLabelForCommand(keybindings, "chat.newLocal");
   const newTerminalThreadShortcutLabel = shortcutLabelForCommand(keybindings, "chat.newTerminal");
-  const newCanvasDrawingShortcutLabel = shortcutLabelForCommand(keybindings, "chat.newCanvas", {
-    platform: navigator.platform,
-    context: { terminalFocus: false },
-  });
   const searchShortcutLabel =
     shortcutLabelForCommand(keybindings, "sidebar.search") ??
     (isMacPlatform(navigator.platform) ? "⌘K" : "Ctrl+K");
@@ -6835,11 +6805,6 @@ export default function Sidebar() {
                         icon={NewThreadIcon}
                         label="New studio chat"
                         onClick={handleCreateStudioChat}
-                      />
-                      <SidebarPrimaryAction
-                        icon={PencilIcon}
-                        label="New studio canvas"
-                        onClick={handleCreateStudioCanvas}
                       />
                       <SidebarPrimaryAction
                         icon={SearchIcon}

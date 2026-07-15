@@ -37,7 +37,6 @@ const STATIC_KEYBINDING_COMMANDS = [
   "chat.newChat",
   "chat.newLocal",
   "chat.newTerminal",
-  "chat.newCanvas",
   "chat.newClaude",
   "chat.newCodex",
   "chat.newCursor",

@@ -48,7 +48,7 @@ export const LAST_INVOKED_SCRIPT_BY_PROJECT_KEY = "synara:last-invoked-script-by
 export const DISMISSED_PROVIDER_HEALTH_BANNERS_KEY = "synara:dismissed-provider-health-banners";
 export const PROMPT_HISTORY_MAX_ENTRIES = 100;
 
-export type ChatPresentationMode = "default" | "editor" | "canvas";
+export type ChatPresentationMode = "default" | "editor";
 
 export function resolveChatPresentationMode(mode: ChatPresentationMode): {
   isWorkspaceRail: boolean;

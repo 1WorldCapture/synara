@@ -22,7 +22,7 @@ describe("cleanupThreadResources", () => {
           calls.push("close-terminals");
           return true;
         }),
-        deleteDrawing: Effect.sync(() => {
+        removeDrawingFile: Effect.sync(() => {
           calls.push("delete-drawing");
           return true;
         }),
@@ -51,7 +51,7 @@ describe("cleanupThreadResources", () => {
           calls.push("close-terminals");
           return true;
         }),
-        deleteDrawing: Effect.sync(() => {
+        removeDrawingFile: Effect.sync(() => {
           calls.push("delete-drawing");
           return false;
         }),

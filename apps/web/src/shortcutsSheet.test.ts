@@ -53,11 +53,6 @@ describe("buildShortcutSheetSections", () => {
         (entry) => entry.id === "composer.focus.toggle" && entry.shortcutLabel === "⌘L",
       ),
     ).toBe(true);
-    expect(
-      sections[0]?.entries.some(
-        (entry) => entry.id === "chat.newCanvas" && entry.shortcutLabel === "⌥⌘A",
-      ),
-    ).toBe(true);
     expect(sections[1]?.title).toBe("In workspace mode");
     expect(sections[2]?.entries[0]?.shortcutLabel).toBe("⌘R");
   });
@@ -114,37 +109,6 @@ describe("buildShortcutSheetSections", () => {
     expect(
       sections[0]?.entries.some(
         (entry) => entry.label === "New chat" && entry.shortcutLabel === "⌥⌘N",
-      ),
-    ).toBe(true);
-  });
-
-  it("shows a customized AI drawing shortcut", () => {
-    const sections = buildShortcutSheetSections({
-      keybindings: [
-        {
-          command: "chat.newCanvas",
-          shortcut: {
-            key: "y",
-            modKey: true,
-            metaKey: false,
-            ctrlKey: false,
-            shiftKey: true,
-            altKey: false,
-          },
-        },
-      ],
-      projectScripts: [],
-      platform: "MacIntel",
-      context: {
-        terminalFocus: false,
-        terminalOpen: false,
-        terminalWorkspaceOpen: false,
-      },
-    });
-
-    expect(
-      sections[0]?.entries.some(
-        (entry) => entry.id === "chat.newCanvas" && entry.shortcutLabel === "⇧⌘Y",
       ),
     ).toBe(true);
   });

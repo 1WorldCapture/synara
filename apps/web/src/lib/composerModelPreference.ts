@@ -1,5 +1,5 @@
 // FILE: composerModelPreference.ts
-// Purpose: Resolves the provider/model precedence shared by fresh Chat and Canvas threads.
+// Purpose: Resolves provider/model precedence shared by conversation creation flows.
 // Layer: Web model-selection logic
 
 import type { ModelSelection, ProviderKind } from "@synara/contracts";

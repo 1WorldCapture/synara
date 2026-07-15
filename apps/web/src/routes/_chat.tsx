@@ -1,11 +1,10 @@
-import { ThreadId, type ResolvedKeybindingsConfig } from "@synara/contracts";
+import type { ResolvedKeybindingsConfig } from "@synara/contracts";
 import { useQuery } from "@tanstack/react-query";
 import {
   Outlet,
   createFileRoute,
   useLocation,
   useNavigate,
-  useParams,
 } from "@tanstack/react-router";
 import { useCallback, useEffect, useRef, useState } from "react";
 
@@ -21,7 +20,6 @@ import ThreadSidebar from "../components/Sidebar";
 import { isDedicatedWorkspaceView } from "../diffRouteSearch";
 import { isElectron } from "../env";
 import { useHandleNewChat } from "../hooks/useHandleNewChat";
-import { useHandleNewCanvasDrawing } from "../hooks/useHandleNewCanvasDrawing";
 import { useHandleNewStudioChat } from "../hooks/useHandleNewStudioChat";
 import { useTemporaryThreadLifecycle } from "../hooks/useTemporaryThreadLifecycle";
 import { useHandleNewThread } from "../hooks/useHandleNewThread";
@@ -235,7 +233,6 @@ function ChatRouteGlobalShortcuts() {
     projects,
   });
   const { handleNewChat } = useHandleNewChat();
-  const { handleNewCanvasDrawing } = useHandleNewCanvasDrawing();
   const { handleNewStudioChat } = useHandleNewStudioChat();
   const homeDir = useWorkspaceStore((state) => state.homeDir);
   const chatWorkspaceRoot = useWorkspaceStore((state) => state.chatWorkspaceRoot);
@@ -404,15 +401,6 @@ function ChatRouteGlobalShortcuts() {
         return;
       }
 
-      if (command === "chat.newCanvas") {
-        const target = resolveNewThreadTarget({ currentProjectId, latestUsableProjectId });
-        if (!target) return;
-        event.preventDefault();
-        event.stopPropagation();
-        void handleNewCanvasDrawing(target.projectId);
-        return;
-      }
-
       if (
         command === "chat.newClaude" ||
         command === "chat.newCodex" ||
@@ -480,7 +468,6 @@ function ChatRouteGlobalShortcuts() {
     commitRecentSwitcherSelection,
     currentProjectId,
     handleNewChatForActiveSurface,
-    handleNewCanvasDrawing,
     handleNewThread,
     keybindings,
     latestUsableProjectId,
@@ -549,25 +536,10 @@ const SIDEBAR_GAP_CLASS =
 const SIDEBAR_INNER_CLASS = "app-sidebar-surface";
 
 function ChatRouteLayout() {
-  const routeThreadId = useParams({
-    strict: false,
-    select: (params) =>
-      typeof params.threadId === "string" ? ThreadId.makeUnsafe(params.threadId) : null,
-  });
-  const activeThreadSurface = useStore(
-    useCallback(
-      (state) =>
-        routeThreadId
-          ? (state.threadShellById[routeThreadId]?.surface ??
-            state.threads.find((thread) => thread.id === routeThreadId)?.surface)
-          : undefined,
-      [routeThreadId],
-    ),
-  );
   const routeView = useLocation({
     select: (location) => (location.search as { view?: unknown }).view,
   });
-  const isDedicatedWorkspace = isDedicatedWorkspaceView(routeView, activeThreadSurface);
+  const isDedicatedWorkspace = isDedicatedWorkspaceView(routeView);
   const [sidebarOpen, setSidebarOpen] = useState(true);
   const resolvedSidebarOpen = isDedicatedWorkspace ? false : sidebarOpen;
 

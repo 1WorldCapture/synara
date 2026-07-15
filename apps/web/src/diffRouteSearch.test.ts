@@ -103,13 +103,13 @@ describe("parseDiffRouteSearch", () => {
     });
   });
 
-  it("recognizes the canvas workspace without accepting editor-only file state", () => {
+  it("sanitizes the removed canvas workspace view to ordinary chat", () => {
     expect(
       parseDiffRouteSearch({
         view: "canvas",
         editorFilePath: "src/app.ts",
       }),
-    ).toEqual({ view: "canvas" });
+    ).toEqual({});
   });
 
   it("recognizes an explicit chat override for dedicated workspace threads", () => {
@@ -118,16 +118,14 @@ describe("parseDiffRouteSearch", () => {
 });
 
 describe("isDedicatedWorkspaceView", () => {
-  it("treats editor and canvas as focused workspaces", () => {
+  it("treats only the editor as a focused workspace", () => {
     expect(isDedicatedWorkspaceView("editor")).toBe(true);
-    expect(isDedicatedWorkspaceView("canvas")).toBe(true);
-    expect(isDedicatedWorkspaceView(undefined, "canvas")).toBe(true);
+    expect(isDedicatedWorkspaceView("canvas")).toBe(false);
   });
 
   it("keeps the global sidebar for ordinary and unknown views", () => {
     expect(isDedicatedWorkspaceView(undefined)).toBe(false);
-    expect(isDedicatedWorkspaceView(undefined, "chat")).toBe(false);
-    expect(isDedicatedWorkspaceView("chat", "canvas")).toBe(false);
+    expect(isDedicatedWorkspaceView("chat")).toBe(false);
     expect(isDedicatedWorkspaceView("diff")).toBe(false);
   });
 });

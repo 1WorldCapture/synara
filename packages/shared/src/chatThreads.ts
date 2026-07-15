@@ -4,7 +4,6 @@
 // Exports: generic title checks plus fallback/generated title sanitizers
 
 export const GENERIC_CHAT_THREAD_TITLE = "New thread";
-export const GENERIC_CANVAS_THREAD_TITLE = "Untitled drawing";
 const MAX_CHAT_THREAD_TITLE_LENGTH = 60;
 // Single source for the title word cap. Exported so the server-side title prompt
 // (textGenerationShared.buildThreadTitlePrompt) derives its wording and fallback
@@ -58,20 +57,4 @@ export function sanitizeGeneratedThreadTitle(raw: string): string {
 
 export function isGenericChatThreadTitle(title: string | null | undefined): boolean {
   return normalizeTitleWhitespace(title ?? "") === GENERIC_CHAT_THREAD_TITLE;
-}
-
-export function buildCanvasThreadPlaceholderTitle(existingDrawingCount: number): string {
-  return existingDrawingCount === 0
-    ? GENERIC_CANVAS_THREAD_TITLE
-    : `${GENERIC_CANVAS_THREAD_TITLE} ${existingDrawingCount + 1}`;
-}
-
-export function isGenericCanvasThreadTitle(title: string | null | undefined): boolean {
-  const normalized = normalizeTitleWhitespace(title ?? "");
-  const numberedPrefix = `${GENERIC_CANVAS_THREAD_TITLE} `;
-  return (
-    normalized === GENERIC_CANVAS_THREAD_TITLE ||
-    (normalized.startsWith(numberedPrefix) &&
-      /^[1-9]\d*$/.test(normalized.slice(numberedPrefix.length)))
-  );
 }

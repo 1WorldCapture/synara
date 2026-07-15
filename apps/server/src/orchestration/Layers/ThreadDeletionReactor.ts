@@ -74,13 +74,13 @@ export function cleanupThreadResources<PR, PE, TR, TE, DR, DE>(input: {
   readonly revokeCanvasAccess: () => unknown;
   readonly stopProviderSession: Effect.Effect<boolean, PE, PR>;
   readonly closeTerminals: Effect.Effect<boolean, TE, TR>;
-  readonly deleteDrawing: Effect.Effect<boolean, DE, DR>;
+  readonly removeDrawingFile: Effect.Effect<boolean, DE, DR>;
 }): Effect.Effect<boolean, PE | TE | DE, PR | TR | DR> {
   return Effect.gen(function* () {
     yield* Effect.sync(input.revokeCanvasAccess);
     const providerCleanupSucceeded = yield* input.stopProviderSession;
     const terminalCleanupSucceeded = yield* input.closeTerminals;
-    const drawingCleanupSucceeded = yield* input.deleteDrawing;
+    const drawingCleanupSucceeded = yield* input.removeDrawingFile;
     return providerCleanupSucceeded && terminalCleanupSucceeded && drawingCleanupSucceeded;
   });
 }
@@ -201,7 +201,7 @@ const make = Effect.gen(function* () {
       revokeCanvasAccess: () => revokeCanvasBridgeCapabilitiesForThread(threadId),
       stopProviderSession: stopProviderSession(threadId),
       closeTerminals: closeThreadTerminals(threadId),
-      deleteDrawing: deleteThreadDrawing(threadId),
+      removeDrawingFile: deleteThreadDrawing(threadId),
     });
   });
 

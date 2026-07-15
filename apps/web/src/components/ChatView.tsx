@@ -39,11 +39,6 @@ import {
   RuntimeMode,
 } from "@synara/contracts";
 import { getModelCapabilities, normalizeModelSlug } from "@synara/shared/model";
-import {
-  CANVAS_FALLBACK_PROVIDER,
-  hideUnsupportedCanvasProviders,
-  isCanvasProviderSupported,
-} from "@synara/shared/canvasProvider";
 import { resolveTailUserMessageEditTarget } from "@synara/shared/conversationEdit";
 import { threadExportBlockedReason } from "@synara/shared/threadExport";
 import { buildTemporaryWorktreeBranchName } from "@synara/shared/git";
@@ -1042,7 +1037,7 @@ interface ChatViewProps {
   onSplitSurface?: () => void;
   onMaximizeSurface?: () => void;
   viewModeAction?: {
-    kind: "editor" | "canvas";
+    kind: "editor";
     label: string;
     active: boolean;
     onClick: () => void;
@@ -2031,17 +2026,10 @@ export default function ChatView({
   const lockedProviderCandidate: ProviderKind | null = hasThreadStarted
     ? (sessionProvider ?? threadProvider ?? selectedProviderByThreadId ?? null)
     : null;
-  const isCanvasThread = activeThread?.surface === "canvas";
-  const lockedProvider =
-    isCanvasThread && lockedProviderCandidate && !isCanvasProviderSupported(lockedProviderCandidate)
-      ? null
-      : lockedProviderCandidate;
+  const lockedProvider = lockedProviderCandidate;
   const preferredProvider =
     lockedProvider ?? selectedProviderByThreadId ?? threadProvider ?? settings.defaultProvider;
-  const selectedProvider: ProviderKind =
-    isCanvasThread && !isCanvasProviderSupported(preferredProvider)
-      ? CANVAS_FALLBACK_PROVIDER
-      : preferredProvider;
+  const selectedProvider: ProviderKind = preferredProvider;
   const previousSelectedProviderRef = useRef<{
     threadId: ThreadId;
     provider: ProviderKind;
@@ -2470,13 +2458,7 @@ export default function ChatView({
     providerModelsLoading,
     requiresDiscoveredModels: selectedProviderRequiresRuntimeModels,
   });
-  const composerHiddenProviders = useMemo(
-    () =>
-      isCanvasThread
-        ? hideUnsupportedCanvasProviders(settings.hiddenProviders)
-        : settings.hiddenProviders,
-    [isCanvasThread, settings.hiddenProviders],
-  );
+  const composerHiddenProviders = settings.hiddenProviders;
   const hiddenProviderSet = useMemo(
     () => new Set<ProviderKind>(composerHiddenProviders),
     [composerHiddenProviders],
@@ -5848,10 +5830,6 @@ export default function ChatView({
   const onProviderModelSelect = useCallback(
     (provider: ProviderKind, model: ModelSlug) => {
       if (!activeThread) return;
-      if (activeThread.surface === "canvas" && !isCanvasProviderSupported(provider)) {
-        scheduleComposerFocus();
-        return;
-      }
       if (lockedProvider !== null && provider !== lockedProvider) {
         scheduleComposerFocus();
         return;
@@ -11003,7 +10981,6 @@ export default function ChatView({
           diffOpen={resolvedDiffOpen}
           diffDisabledReason={diffDisabledReason}
           environment={isWorkspaceRail ? null : environmentHeaderState}
-          workspaceViewAction={viewModeAction?.kind === "canvas" ? viewModeAction : null}
           surfaceMode={surfaceMode}
           chatLayoutAction={
             surfaceMode === "single" && onSplitSurface

@@ -115,7 +115,6 @@ import {
   createAllThreadsSelector,
   createProjectSelector,
   createSidebarThreadSummariesSelector,
-  createThreadSelector,
   createThreadExistsSelector,
   createThreadProjectIdSelector,
   createThreadWorkspaceMetadataSelector,
@@ -139,7 +138,6 @@ import {
   resolveSplitPaneMaximizeDecision,
   resolveThreadPickerTitle,
   resolveToggledChatPanelPatch,
-  shouldRenderCanvasWorkspace,
 } from "./-chatThreadRoute.logic";
 import { getLocalStorageItem, setLocalStorageItem } from "~/hooks/useLocalStorage";
 import {
@@ -156,11 +154,6 @@ const BrowserPanel = lazy(() => import("../components/BrowserPanel"));
 const EditorWorkspaceView = lazy(() =>
   import("../components/EditorWorkspaceView").then((module) => ({
     default: module.EditorWorkspaceView,
-  })),
-);
-const CanvasWorkspaceView = lazy(() =>
-  import("../components/CanvasWorkspaceView").then((module) => ({
-    default: module.CanvasWorkspaceView,
   })),
 );
 const SPLIT_PANE_PANEL_DEFAULT_WIDTH_PX = 22 * 16;
@@ -679,7 +672,7 @@ function DeferredChatView(props: {
   onSplitSurface?: () => void;
   onMaximize?: () => void;
   viewModeAction?: {
-    kind: "editor" | "canvas";
+    kind: "editor";
     label: string;
     active: boolean;
     onClick: () => void;
@@ -1414,14 +1407,6 @@ function SplitChatSurface(props: { splitViewId: SplitViewId; routeThreadId: Thre
   );
 }
 
-const CANVAS_CHAT_PANEL_STATE: SplitViewPanePanelState = {
-  panel: null,
-  diffTurnId: null,
-  diffFilePath: null,
-  hasOpenedPanel: false,
-  lastOpenPanel: "browser",
-};
-
 function stripEditorViewSearchParams<T extends Record<string, unknown>>(
   params: T,
 ): Omit<T, "view" | "editorFilePath"> {
@@ -1456,9 +1441,6 @@ function SingleChatSurface(props: {
   const setDockOpen = useRightDockStore((store) => store.setDockOpen);
   const activeProject = useStore(
     useMemo(() => createProjectSelector(props.projectId), [props.projectId]),
-  );
-  const activeThread = useStore(
-    useMemo(() => createThreadSelector(props.threadId), [props.threadId]),
   );
   const threadWorkspaceMetadata = useStore(
     useMemo(() => createThreadWorkspaceMetadataSelector(props.threadId), [props.threadId]),
@@ -1584,28 +1566,6 @@ function SingleChatSurface(props: {
       to: "/$threadId",
       params: { threadId: props.threadId },
       search: (previous) => stripEditorViewSearchParams(stripDiffSearchParams(previous)),
-    });
-  }, [navigate, props.threadId]);
-
-  const handleOpenCanvasView = useCallback(() => {
-    void navigate({
-      to: "/$threadId",
-      params: { threadId: props.threadId },
-      search: (previous) => ({
-        ...stripEditorViewSearchParams(stripDiffSearchParams(previous)),
-        view: "canvas",
-      }),
-    });
-  }, [navigate, props.threadId]);
-
-  const handleCloseCanvasView = useCallback(() => {
-    void navigate({
-      to: "/$threadId",
-      params: { threadId: props.threadId },
-      search: (previous) => ({
-        ...stripEditorViewSearchParams(stripDiffSearchParams(previous)),
-        view: "chat",
-      }),
     });
   }, [navigate, props.threadId]);
 
@@ -1962,46 +1922,6 @@ function SingleChatSurface(props: {
     [editorCenterMode, editorDiffPanelState.diffFilePath, editorDiffPanelState.diffTurnId],
   );
 
-  if (
-    shouldRenderCanvasWorkspace(activeThread?.surface, props.search.view) &&
-    activeProject &&
-    props.projectId
-  ) {
-    return (
-      <div className={cn(CHAT_MAIN_VIEWPORT_SHELL_CLASS_NAME, CHAT_MAIN_CONTENT_SURFACE_CLASS_NAME)}>
-        <Suspense fallback={<ChatMountSkeleton />}>
-          <CanvasWorkspaceView
-            key={props.threadId}
-            threadId={props.threadId}
-            projectId={props.projectId}
-            projectName={activeProject.name}
-            onExitCanvasView={handleCloseCanvasView}
-            chatPanel={
-              <SidebarInset
-                className="min-h-0 min-w-0 overflow-hidden overscroll-y-none text-foreground"
-                surfaceClassName={CHAT_BACKGROUND_CLASS_NAME}
-              >
-                <DeferredChatView
-                  threadId={props.threadId}
-                  paneScopeId={`canvas:${props.threadId}`}
-                  deferMount={false}
-                  surfaceMode="split"
-                  presentationMode="canvas"
-                  isFocusedPane
-                  panelState={CANVAS_CHAT_PANEL_STATE}
-                  onToggleDiff={noop}
-                  onToggleBrowser={noop}
-                  onOpenBrowserUrl={noop}
-                  onOpenTurnDiff={noop}
-                />
-              </SidebarInset>
-            }
-          />
-        </Suspense>
-      </div>
-    );
-  }
-
   if (props.search.view === "editor") {
     return (
       <WorkspaceFileOpenerContext.Provider value={editorFileOpener}>
@@ -2096,21 +2016,12 @@ function SingleChatSurface(props: {
               onOpenBrowserUrl={handleOpenBrowserUrl}
               onOpenTurnDiff={handleOpenTurnDiff}
               onSplitSurface={handleSplitSurface}
-              viewModeAction={
-                activeThread?.surface === "canvas"
-                  ? {
-                      kind: "canvas",
-                      label: "Canvas view",
-                      active: false,
-                      onClick: handleOpenCanvasView,
-                    }
-                  : {
-                      kind: "editor",
-                      label: "Editor view",
-                      active: false,
-                      onClick: handleOpenEditorView,
-                    }
-              }
+              viewModeAction={{
+                kind: "editor",
+                label: "Editor view",
+                active: false,
+                onClick: handleOpenEditorView,
+              }}
             />
           </RouteInsetSurface>
         </ChatPaneDropOverlay>

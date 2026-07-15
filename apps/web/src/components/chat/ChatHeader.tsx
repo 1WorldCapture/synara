@@ -26,7 +26,6 @@ import {
   HistoryIcon,
   MessageCircleIcon,
   PanelRightCloseIcon,
-  PencilIcon,
   PlusIcon,
   TerminalIcon,
   XIcon,
@@ -110,11 +109,6 @@ interface ChatHeaderProps {
   // Open-in-editor + git-actions + diff-toggle cluster into one Environment button that
   // drives the Environment panel; otherwise the legacy cluster is rendered.
   environment?: EnvironmentToggleState | null;
-  workspaceViewAction?: {
-    label: string;
-    active: boolean;
-    onClick: () => void;
-  } | null;
   chatLayoutAction?: {
     kind: "split" | "maximize";
     label: string;
@@ -513,7 +507,6 @@ export const ChatHeader = memo(function ChatHeader({
   surfaceMode = "single",
   isSidechat = false,
   environment = null,
-  workspaceViewAction = null,
   chatLayoutAction = null,
   changeThreadAction = null,
   editorChatControls = null,
@@ -830,27 +823,6 @@ export const ChatHeader = memo(function ChatHeader({
               }
             />
             <TooltipPopup side="bottom">{changeThreadAction.label}</TooltipPopup>
-          </Tooltip>
-        ) : null}
-
-        {workspaceViewAction ? (
-          <Tooltip>
-            <TooltipTrigger
-              render={
-                <ChatHeaderButton
-                  type="button"
-                  tone="outline"
-                  className={compact ? "gap-1" : "gap-1.5"}
-                  aria-label={workspaceViewAction.label}
-                  aria-pressed={workspaceViewAction.active}
-                  onClick={workspaceViewAction.onClick}
-                >
-                  <PencilIcon className="size-3.5" />
-                  {!compact ? <span className="font-normal">Canvas</span> : null}
-                </ChatHeaderButton>
-              }
-            />
-            <TooltipPopup side="bottom">{workspaceViewAction.label}</TooltipPopup>
           </Tooltip>
         ) : null}
 

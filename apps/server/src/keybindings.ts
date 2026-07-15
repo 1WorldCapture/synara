@@ -105,7 +105,6 @@ export const DEFAULT_KEYBINDINGS: ReadonlyArray<KeybindingRule> = [
   { key: "mod+shift+n", command: "chat.newLatestProject", when: "!terminalFocus || isMac" },
   { key: "mod+alt+n", command: "chat.newChat", when: "!terminalFocus || isMac" },
   { key: "mod+shift+t", command: "chat.newTerminal", when: "!terminalFocus || isMac" },
-  { key: "mod+alt+a", command: "chat.newCanvas", when: "!terminalFocus || isMac" },
   { key: "mod+alt+c", command: "chat.newClaude", when: "!terminalFocus || isMac" },
   { key: "mod+alt+x", command: "chat.newCodex", when: "!terminalFocus || isMac" },
   { key: "mod+alt+r", command: "chat.newCursor", when: "!terminalFocus || isMac" },
@@ -572,7 +571,7 @@ const LEGACY_KEYBINDING_COMMAND_ALIASES = {
 
 // Commands removed without a direct replacement are dropped during startup so
 // persisted configs from older releases do not produce validation warnings.
-const RETIRED_LEGACY_KEYBINDING_COMMANDS = new Set(["chat.newGemini"]);
+const RETIRED_LEGACY_KEYBINDING_COMMANDS = new Set(["chat.newGemini", "chat.newCanvas"]);
 const RETIRED_LEGACY_KEYBINDING_COMMAND_PATTERN = /^(?:composer\.)?modelPicker\.jump\.[1-9]$/;
 const OUTDATED_RECENT_VIEW_TERMINAL_GUARD = "!terminalFocus";
 const RECENT_VIEW_SHORTCUT_BY_COMMAND: Partial<Record<KeybindingRule["command"], string>> = {
@@ -593,7 +592,6 @@ const CREATION_COMMANDS_WITH_TERMINAL_ESCAPE = new Set<KeybindingRule["command"]
   "chat.newChat",
   "chat.newLocal",
   "chat.newTerminal",
-  "chat.newCanvas",
   "chat.newClaude",
   "chat.newCodex",
   "chat.newCursor",

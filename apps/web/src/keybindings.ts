@@ -115,11 +115,6 @@ export const DEFAULT_SHORTCUT_FALLBACKS: ResolvedKeybindingsConfig = [
     whenAst: whenCreationAllowed,
   },
   {
-    command: "chat.newCanvas",
-    shortcut: commandShortcut("a", { altKey: true }),
-    whenAst: whenCreationAllowed,
-  },
-  {
     command: "chat.newCodex",
     shortcut: commandShortcut("x", { altKey: true }),
     whenAst: whenCreationAllowed,

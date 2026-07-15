@@ -503,7 +503,6 @@ it.layer(NodeServices.layer)("keybindings", (it) => {
       yield* writeKeybindingsConfig(keybindingsConfigPath, [
         { key: "mod+n", command: "chat.new", when: "!terminalFocus" },
         { key: "mod+shift+k", command: "chat.newTerminal", when: "!terminalFocus" },
-        { key: "mod+shift+y", command: "chat.newCanvas", when: "!terminalFocus" },
         { key: "mod+shift+u", command: "settings.usage", when: "!terminalFocus" },
       ]);
 
@@ -527,14 +526,6 @@ it.layer(NodeServices.layer)("keybindings", (it) => {
           (entry) =>
             entry.key === "mod+shift+k" &&
             entry.command === "chat.newTerminal" &&
-            entry.when === "!terminalFocus || isMac",
-        ),
-      );
-      assert.isTrue(
-        persisted.some(
-          (entry) =>
-            entry.key === "mod+shift+y" &&
-            entry.command === "chat.newCanvas" &&
             entry.when === "!terminalFocus || isMac",
         ),
       );
@@ -605,6 +596,7 @@ it.layer(NodeServices.layer)("keybindings", (it) => {
           { key: "mod+1", command: "modelPicker.jump.1" },
           { key: "mod+2", command: "composer.modelPicker.jump.2" },
           { key: "mod+alt+g", command: "chat.newGemini" },
+          { key: "mod+alt+a", command: "chat.newCanvas" },
           { key: "mod+k", command: "sidebar.search" },
         ]),
       );
@@ -622,6 +614,9 @@ it.layer(NodeServices.layer)("keybindings", (it) => {
       );
       assert.isFalse(
         configState.keybindings.some((entry) => String(entry.command) === "chat.newGemini"),
+      );
+      assert.isFalse(
+        configState.keybindings.some((entry) => String(entry.command) === "chat.newCanvas"),
       );
       assert.isTrue(
         configState.keybindings.some(
@@ -644,6 +639,9 @@ it.layer(NodeServices.layer)("keybindings", (it) => {
         persisted.some((entry) => String(entry.command).includes("modelPicker.jump.")),
       );
       assert.isFalse(persisted.some((entry) => String(entry.command) === "chat.newGemini"));
+      assert.isFalse(
+        persisted.some((entry) => String(entry.command) === "chat.newCanvas"),
+      );
       assert.isFalse(
         persisted.some((entry) => entry.command === "modelPicker.toggle" && entry.key === "mod+1"),
       );
@@ -686,10 +684,6 @@ it.layer(NodeServices.layer)("keybindings", (it) => {
         const persistedNewTerminalThread = byCommand.get("chat.newTerminal");
         assert.isNotNull(persistedNewTerminalThread);
         assert.equal(persistedNewTerminalThread?.key, "mod+shift+t");
-
-        const persistedNewCanvas = byCommand.get("chat.newCanvas");
-        assert.isNotNull(persistedNewCanvas);
-        assert.equal(persistedNewCanvas?.key, "mod+alt+a");
 
         for (const defaultRule of DEFAULT_KEYBINDINGS) {
           assert.isTrue(byCommand.has(defaultRule.command), `expected ${defaultRule.command}`);
