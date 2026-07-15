@@ -68,6 +68,14 @@ vi.mock("@tanstack/react-router", async () => {
   };
 });
 
+vi.mock("~/hooks/useDesktopTopBarGutter", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("~/hooks/useDesktopTopBarGutter")>();
+  return {
+    ...actual,
+    useDesktopTopBarTrafficLightGutterClassName: () => "test-traffic-light-gutter",
+  };
+});
+
 const PROJECT_ID = ProjectId.makeUnsafe("project-canvas-browser");
 const THREAD_ID = ThreadId.makeUnsafe("thread-canvas-browser");
 const NOW_ISO = "2026-07-14T00:00:00.000Z";
@@ -207,6 +215,9 @@ describe("CanvasWorkspaceView", () => {
 
     try {
       await expect.element(page.getByText("Canvas Project")).toBeInTheDocument();
+      await expect
+        .element(page.getByTestId("canvas-project-header"))
+        .toHaveClass("test-traffic-light-gutter");
       await expect.element(
         page.getByRole("button", { name: "Canvas Thread" }),
       ).toBeInTheDocument();
@@ -355,12 +366,24 @@ describe("CanvasWorkspaceView", () => {
         "data-immersive",
         "true",
       );
+      await expect
+        .element(page.getByTestId("canvas-project-header"))
+        .not.toHaveClass("test-traffic-light-gutter");
+      await expect
+        .element(page.getByTestId("canvas-drawing-header"))
+        .toHaveClass("test-traffic-light-gutter");
       await expect.element(page.getByText("Persistent Chat")).not.toBeVisible();
       await page.getByRole("button", { name: "Exit full screen" }).click();
       await expect.element(page.getByTestId("canvas-workspace")).toHaveAttribute(
         "data-immersive",
         "false",
       );
+      await expect
+        .element(page.getByTestId("canvas-project-header"))
+        .toHaveClass("test-traffic-light-gutter");
+      await expect
+        .element(page.getByTestId("canvas-drawing-header"))
+        .not.toHaveClass("test-traffic-light-gutter");
 
       previewListener?.({
         threadId: THREAD_ID,

@@ -33,6 +33,7 @@ import {
 import { FiCrosshair, FiMessageSquare, FiPlus, FiTrash2 } from "react-icons/fi";
 
 import { useHandleNewCanvasDrawing } from "~/hooks/useHandleNewCanvasDrawing";
+import { useDesktopTopBarTrafficLightGutterClassName } from "~/hooks/useDesktopTopBarGutter";
 import { useMediaQuery } from "~/hooks/useMediaQuery";
 import { useTheme } from "~/hooks/useTheme";
 import { canvasAgentMutationTurnId, isCanvasAgentEditing } from "~/lib/canvasAgentState";
@@ -215,6 +216,9 @@ export function CanvasWorkspaceView(props: {
   const [followingAgent, setFollowingAgent] = useState(true);
   const [immersive, setImmersive] = useState(false);
   const [takingOver, setTakingOver] = useState(false);
+  const trafficLightGutterClassName = useDesktopTopBarTrafficLightGutterClassName({
+    surfaceOwnsWindowLeftEdge: immersive,
+  });
   const reducedMotion = useMediaQuery("(prefers-reduced-motion: reduce)");
   const canvasLocked = agentEditing || previewActive || finalSyncActive;
 
@@ -928,7 +932,13 @@ export function CanvasWorkspaceView(props: {
           immersive && "hidden",
         )}
       >
-        <div className="flex h-11 shrink-0 items-center gap-2 border-b border-border/65 px-3">
+        <div
+          className={cn(
+            "flex h-11 shrink-0 items-center gap-2 border-b border-border/65 px-3",
+            !immersive && trafficLightGutterClassName,
+          )}
+          data-testid="canvas-project-header"
+        >
           <div className="min-w-0 flex-1">
             <div className="truncate text-[11px] text-muted-foreground">Project</div>
             <div className="truncate text-[12px] font-medium">{props.projectName}</div>
@@ -973,7 +983,13 @@ export function CanvasWorkspaceView(props: {
       </aside>
 
       <main className="flex min-w-0 flex-1 flex-col bg-background">
-        <header className="flex h-11 shrink-0 items-center gap-3 border-b border-border/65 px-3">
+        <header
+          className={cn(
+            "flex h-11 shrink-0 items-center gap-3 border-b border-border/65 px-3",
+            immersive && trafficLightGutterClassName,
+          )}
+          data-testid="canvas-drawing-header"
+        >
           <div className="min-w-0 flex-1 truncate text-[13px] font-medium">
             {thread?.title ?? "Drawing"}
           </div>

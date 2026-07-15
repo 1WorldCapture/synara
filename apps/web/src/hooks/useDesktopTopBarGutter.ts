@@ -36,9 +36,13 @@ export function shouldReserveDesktopTopBarTrafficLightGutter(input: {
   isMacDesktop: boolean;
   sidebarOpen: boolean;
   isMobile: boolean;
+  surfaceOwnsWindowLeftEdge?: boolean;
 }): boolean {
   if (!input.isElectron) return false;
   if (!input.isMacDesktop) return false;
+  // Full-window overlays cover the sidebar without changing its persisted open
+  // state, so the overlay's own header becomes the real window-left surface.
+  if (input.surfaceOwnsWindowLeftEdge) return true;
   // Mobile drawers float above content rather than reserving a column,
   // so the chat header always owns the left edge in that mode.
   if (input.isMobile) return true;
@@ -97,7 +101,9 @@ export function useSyncDesktopTopBarTrafficLightGutterZoom(): void {
  * Use this for any chrome surface whose top bar can sit flush against the
  * window's left edge: chat header, settings header, workspace header, etc.
  */
-export function useDesktopTopBarTrafficLightGutterClassName(): string | null {
+export function useDesktopTopBarTrafficLightGutterClassName(options?: {
+  surfaceOwnsWindowLeftEdge?: boolean;
+}): string | null {
   const { isMobile, open } = useSidebar();
   const isMacDesktop = typeof navigator !== "undefined" ? isMacPlatform(navigator.platform) : false;
   return shouldReserveDesktopTopBarTrafficLightGutter({
@@ -105,6 +111,7 @@ export function useDesktopTopBarTrafficLightGutterClassName(): string | null {
     isMacDesktop,
     sidebarOpen: open,
     isMobile,
+    surfaceOwnsWindowLeftEdge: options?.surfaceOwnsWindowLeftEdge,
   })
     ? DESKTOP_TOP_BAR_TRAFFIC_LIGHT_GUTTER_CLASS
     : null;

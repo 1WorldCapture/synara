@@ -55,6 +55,18 @@ describe("shouldReserveDesktopTopBarTrafficLightGutter", () => {
     ).toBe(true);
   });
 
+  it("reserves a gutter when a full-window surface covers an open sidebar", () => {
+    expect(
+      shouldReserveDesktopTopBarTrafficLightGutter({
+        isElectron: true,
+        isMacDesktop: true,
+        sidebarOpen: true,
+        isMobile: false,
+        surfaceOwnsWindowLeftEdge: true,
+      }),
+    ).toBe(true);
+  });
+
   it("reserves a gutter on mobile because the drawer floats over content", () => {
     for (const sidebarOpen of [true, false]) {
       expect(
