@@ -15,6 +15,7 @@ describe("RIGHT_DOCK_PANE_KINDS (single source of truth)", () => {
   it("lists every supported kind", () => {
     expect([...RIGHT_DOCK_PANE_KINDS]).toEqual([
       "browser",
+      "canvas",
       "diff",
       "explorer",
       "file",
@@ -36,6 +37,7 @@ describe("isRightDockPaneKind", () => {
   it("accepts the known pane kinds", () => {
     for (const kind of [
       "browser",
+      "canvas",
       "diff",
       "explorer",
       "file",
@@ -53,6 +55,24 @@ describe("isRightDockPaneKind", () => {
     expect(isRightDockPaneKind(undefined)).toBe(false);
     expect(isRightDockPaneKind(null)).toBe(false);
     expect(isRightDockPaneKind(42)).toBe(false);
+  });
+});
+
+describe("canvas pane", () => {
+  it("persists as a singleton and reuses the existing pane", () => {
+    const first = openPaneInState(createDefaultRightDockState(), {
+      paneId: "canvas-1",
+      kind: "canvas",
+    });
+    const reopened = openPaneInState(
+      { ...first, open: false },
+      { paneId: "canvas-2", kind: "canvas" },
+    );
+
+    expect(reopened.open).toBe(true);
+    expect(reopened.panes).toHaveLength(1);
+    expect(reopened.activePaneId).toBe("canvas-1");
+    expect(sanitizeRightDockThreadState(reopened)).toEqual(reopened);
   });
 });
 

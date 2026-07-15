@@ -9,6 +9,7 @@ describe("RIGHT_DOCK_ADD_MENU_KINDS", () => {
     // opened by clicking a file reference in chat, not from the add menu.
     expect(RIGHT_DOCK_ADD_MENU_KINDS).toContain("explorer");
     expect(RIGHT_DOCK_ADD_MENU_KINDS).not.toContain("file");
+    expect(RIGHT_DOCK_ADD_MENU_KINDS).toContain("canvas");
   });
 
   it("keeps the canonical kind order minus context-only panes", () => {
@@ -19,5 +20,9 @@ describe("RIGHT_DOCK_ADD_MENU_KINDS", () => {
 
   it("labels the explorer pane", () => {
     expect(getRightDockPaneMeta("explorer").label).toBe("Explorer");
+  });
+
+  it("labels the Canvas pane", () => {
+    expect(getRightDockPaneMeta("canvas").label).toBe("Canvas");
   });
 });

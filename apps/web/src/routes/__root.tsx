@@ -25,6 +25,7 @@ import { Throttler } from "@tanstack/react-pacer";
 import { APP_DISPLAY_NAME, APP_VERSION } from "../branding";
 import { DesktopWindowControls } from "../components/DesktopWindowControls";
 import { AppSnapCoordinator } from "../components/AppSnapCoordinator";
+import { CanvasDockRevealCoordinator } from "../components/CanvasDockRevealCoordinator";
 import { AppSnapWelcomeDialog } from "../components/AppSnapWelcomeDialog";
 import { FeedbackDialog } from "../components/FeedbackDialog";
 import { SETTINGS_TARGETS } from "../settingsNavigation";
@@ -91,6 +92,7 @@ import { useDiffRouteSearch } from "../hooks/useDiffRouteSearch";
 import { useProviderAuthRefreshOnFocus } from "../hooks/useProviderAuthRefreshOnFocus";
 import { useProviderStatusRefresh } from "../hooks/useProviderStatusRefresh";
 import { resolveSplitViewThreadIds, selectSplitView, useSplitViewStore } from "../splitViewStore";
+import { useRightDockStore } from "../rightDockStore";
 import { providerModelDiscoveryInvalidationFingerprint } from "../lib/providerDiscoveryInvalidation";
 import { providerDiscoveryQueryKeys } from "../lib/providerDiscoveryReactQuery";
 import { useAppSettings } from "../appSettings";
@@ -222,6 +224,7 @@ function RootRouteView() {
         <AnchoredToastProvider>
           <GitProgressToastPreviewDev />
           <EventRouter />
+          <CanvasDockRevealCoordinator />
           <ProviderStatusRefreshCoordinator />
           <GlobalShortcutsDialog />
           <GlobalFeedbackDialog />
@@ -1264,6 +1267,10 @@ function EventRouter() {
       }
       shellSnapshotSequence = item.sequence;
       applyShellEvent(item);
+      if (item.kind === "thread-removed") {
+        useRightDockStore.getState().clearThreadDockState(item.threadId);
+        useSplitViewStore.getState().removeThreadFromSplitViews(item.threadId);
+      }
       if (item.kind === "thread-upserted") {
         reconcilePromotedDraftsFromShellThreads([item.thread]);
       }

@@ -76,20 +76,11 @@ import {
   useSplitViewStore,
 } from "../splitViewStore";
 import { selectRightDockState, useRightDockStore } from "../rightDockStore";
-import {
-  type RightDockPane,
-  type RightDockPaneKind,
-  resolveActivePane,
-} from "../rightDockStore.logic";
-import { RightDock } from "../components/chat/RightDock";
+import { resolveActivePane } from "../rightDockStore.logic";
+import { ThreadRightDock } from "../components/chat/ThreadRightDock";
 import { CHAT_SURFACE_HEADER_ROW_CLASS_NAME } from "../components/chat/chatHeaderControls";
 import { PanelStateMessage } from "../components/chat/PanelStateMessage";
-import {
-  RIGHT_DOCK_ADD_MENU_KINDS,
-  getRightDockPaneMeta,
-} from "../components/chat/rightDockPaneMeta";
 import { readEditorViewState, storeEditorViewState } from "../editorViewState";
-import { basenameOfPath } from "../file-icons";
 import {
   addChatFileComment,
   appendChatFileReference,
@@ -98,7 +89,6 @@ import {
   type ChatFileReference,
 } from "../lib/chatReferences";
 import type { FileCommentSelection } from "../lib/fileComments";
-import { type DockPaneRuntimeMode } from "../lib/dockPaneActivation";
 import { projectListDirectoriesQueryOptions } from "../lib/projectReactQuery";
 import {
   WorkspaceFileOpenerContext,
@@ -115,10 +105,8 @@ import {
 import {
   EDITOR_CHAT_PANE_SCOPE_ID,
   SINGLE_CHAT_PANE_SCOPE_ID,
-  dockSidechatPaneScopeId,
   splitViewPaneScopeId,
 } from "../lib/chatPaneScope";
-import { getSidechatCreator } from "../lib/sidechatCreatorRegistry";
 import { toastManager } from "../components/ui/toast";
 import { useAppSettings } from "../appSettings";
 import { useStore } from "../store";
@@ -160,17 +148,11 @@ import {
   CHAT_MAIN_VIEWPORT_SHELL_CLASS_NAME,
 } from "../components/chat/composerPickerStyles";
 import { cn } from "~/lib/utils";
-import {
-  pullRequestDetailInputFromPane,
-  pullRequestPaneTabLabel,
-} from "~/components/pullRequest/pullRequestDetail.logic";
-import { usePullRequestPaneStateIcon } from "~/components/pullRequest/usePullRequestPaneStateIcon";
 import { RouteInsetSurface } from "~/components/RouteInsetSurface";
 import { SidebarInset } from "~/components/ui/sidebar";
 
 const DiffPanel = lazy(() => import("../components/DiffPanel"));
 const BrowserPanel = lazy(() => import("../components/BrowserPanel"));
-const PullRequestDockPane = lazy(() => import("../components/pullRequest/PullRequestDockPane"));
 const EditorWorkspaceView = lazy(() =>
   import("../components/EditorWorkspaceView").then((module) => ({
     default: module.EditorWorkspaceView,
@@ -181,23 +163,6 @@ const CanvasWorkspaceView = lazy(() =>
     default: module.CanvasWorkspaceView,
   })),
 );
-const DockTerminalPane = lazy(() => import("../components/chat/DockTerminalPane"));
-const GitPanel = lazy(() => import("../components/chat/GitPanel"));
-const DockExplorerPane = lazy(() =>
-  import("../components/chat/DockExplorerPane").then((module) => ({
-    default: module.DockExplorerPane,
-  })),
-);
-const DockFilePane = lazy(() =>
-  import("../components/chat/DockFilePane").then((module) => ({
-    default: module.DockFilePane,
-  })),
-);
-// Pre-measure approximation of the dock's 50/50 split (half the viewport minus
-// half a 16rem left sidebar). RightDock measures the actual shell on open and
-// pins the width to exactly half; this only covers the first paint before that
-// effect runs. `max()` keeps a sane minimum on narrow screens.
-const DIFF_INLINE_DEFAULT_WIDTH = "max(28rem, calc(50vw - 8rem))";
 const SPLIT_PANE_PANEL_DEFAULT_WIDTH_PX = 22 * 16;
 const BROWSER_SPLIT_PANE_PANEL_DEFAULT_WIDTH_PX = 30 * 16;
 const SPLIT_PANE_CHAT_MIN_WIDTH = 20 * 16;
@@ -928,6 +893,31 @@ function SplitChatSurface(props: { splitViewId: SplitViewId; routeThreadId: Thre
     splitView,
     routeThreadId: props.routeThreadId,
   });
+  const focusedDockLeaf = activeSplitView
+    ? findLeafPaneById(activeSplitView.root, activeSplitView.focusedPaneId)
+    : null;
+  const focusedDockThreadId = focusedDockLeaf?.threadId ?? null;
+  const focusedDockSelectorThreadId = focusedDockThreadId ?? props.routeThreadId;
+  const focusedDockThread =
+    threads.find((thread) => thread.id === focusedDockSelectorThreadId) ?? null;
+  const focusedDockDraft = useComposerDraftStore(
+    (store) => store.draftThreadsByThreadId[focusedDockSelectorThreadId] ?? null,
+  );
+  const focusedDockWorkspaceMetadata = useStore(
+    useMemo(
+      () => createThreadWorkspaceMetadataSelector(focusedDockSelectorThreadId),
+      [focusedDockSelectorThreadId],
+    ),
+  );
+  const focusedDockProjectId = focusedDockThread?.projectId ?? focusedDockDraft?.projectId ?? null;
+  const focusedDockProject =
+    projects.find((project) => project.id === focusedDockProjectId) ?? null;
+  const focusedDockWorkspaceRoot = resolveFilePreviewWorkspaceRoot({
+    projectCwd: focusedDockProject?.cwd ?? null,
+    threadEnvMode: focusedDockWorkspaceMetadata.envMode ?? focusedDockDraft?.envMode ?? null,
+    threadWorktreePath:
+      focusedDockWorkspaceMetadata.worktreePath ?? focusedDockDraft?.worktreePath ?? null,
+  });
 
   useEffect(() => {
     if (!activeSplitView) {
@@ -1353,6 +1343,17 @@ function SplitChatSurface(props: { splitViewId: SplitViewId; routeThreadId: Thre
           renderLeaf={renderLeaf}
           onSetRatio={handleSetRatio}
         />
+        {focusedDockThreadId ? (
+          <ThreadRightDock
+            threadId={focusedDockThreadId}
+            projectId={focusedDockProjectId}
+            workspaceRoot={focusedDockWorkspaceRoot}
+            composerPaneScopeId={splitViewPaneScopeId(
+              activeSplitView.id,
+              activeSplitView.focusedPaneId,
+            )}
+          />
+        ) : null}
       </div>
       <Dialog
         open={threadPickerPaneId !== null}
@@ -1413,21 +1414,6 @@ function SplitChatSurface(props: { splitViewId: SplitViewId; routeThreadId: Thre
   );
 }
 
-function RightDockPanePlaceholder(props: { kind: RightDockPaneKind }) {
-  const { label } = getRightDockPaneMeta(props.kind);
-  return <PanelStateMessage>{label} panel is coming soon.</PanelStateMessage>;
-}
-
-// Embedded dock chats (side chats) manage their own panels through the dock, so the
-// nested ChatView always renders with a closed, inert panel state.
-const DOCK_EMBEDDED_PANEL_STATE: SplitViewPanePanelState = {
-  panel: null,
-  diffTurnId: null,
-  diffFilePath: null,
-  hasOpenedPanel: false,
-  lastOpenPanel: "browser",
-};
-
 const CANVAS_CHAT_PANEL_STATE: SplitViewPanePanelState = {
   panel: null,
   diffTurnId: null,
@@ -1467,10 +1453,7 @@ function SingleChatSurface(props: {
   const dockState = useRightDockStore(selectRightDockState(props.threadId));
   const openPane = useRightDockStore((store) => store.openPane);
   const toggleSingletonPane = useRightDockStore((store) => store.toggleSingletonPane);
-  const closePane = useRightDockStore((store) => store.closePane);
-  const setActivePane = useRightDockStore((store) => store.setActivePane);
   const setDockOpen = useRightDockStore((store) => store.setDockOpen);
-  const updatePane = useRightDockStore((store) => store.updatePane);
   const activeProject = useStore(
     useMemo(() => createProjectSelector(props.projectId), [props.projectId]),
   );
@@ -1538,8 +1521,6 @@ function SingleChatSurface(props: {
 
   const activePane = resolveActivePane(dockState);
   const {
-    activePaneRuntimeMode,
-    requestActivePaneLive: requestActiveDockPaneLive,
     requestImmediateHydration: requestImmediateDockHydration,
   } = useDockPaneRuntimeActivation({
     threadId: props.threadId,
@@ -1855,39 +1836,6 @@ function SingleChatSurface(props: {
     setDockOpen,
   ]);
 
-  useEffect(() => {
-    const onMenuAction = window.desktopBridge?.onMenuAction;
-    if (typeof onMenuAction !== "function") {
-      return;
-    }
-
-    const unsubscribe = onMenuAction((action) => {
-      if (action !== "toggle-browser") return;
-      requestImmediateDockHydration("browser");
-      toggleSingletonPane(props.threadId, { kind: "browser" });
-    });
-
-    return () => {
-      unsubscribe?.();
-    };
-  }, [props.threadId, requestImmediateDockHydration, toggleSingletonPane]);
-
-  useEffect(() => {
-    const onOpenBrowserPanelRequest = window.desktopBridge?.browser.onBrowserUseOpenPanelRequest;
-    if (typeof onOpenBrowserPanelRequest !== "function") {
-      return;
-    }
-
-    const unsubscribe = onOpenBrowserPanelRequest(() => {
-      requestImmediateDockHydration("browser");
-      openPane(props.threadId, { kind: "browser" });
-    });
-
-    return () => {
-      unsubscribe?.();
-    };
-  }, [openPane, props.threadId, requestImmediateDockHydration]);
-
   const excludedThreadIds = useMemo(
     () => new Set<ThreadIdType>([props.threadId]),
     [props.threadId],
@@ -1957,247 +1905,6 @@ function SingleChatSurface(props: {
     },
     [openEditorProject],
   );
-  const paneLabelOverrides = useMemo(() => {
-    const hasSidechatPane = dockState.panes.some((pane) => pane.kind === "sidechat");
-    const hasNamedFilePane = dockState.panes.some(
-      (pane) => pane.kind === "file" && pane.filePath !== null,
-    );
-    const hasNumberedPullRequestPane = dockState.panes.some(
-      (pane) => pane.kind === "pullRequest" && pane.pullRequestNumber !== null,
-    );
-    if (!hasSidechatPane && !hasNamedFilePane && !hasNumberedPullRequestPane) {
-      return undefined;
-    }
-    const titleByThreadId = hasSidechatPane
-      ? new Map(threadSummaries.map((summary) => [summary.id, summary.title]))
-      : null;
-    const overrides: Record<string, string | undefined> = {};
-    for (const pane of dockState.panes) {
-      if (pane.kind === "sidechat" && pane.threadId) {
-        overrides[pane.id] = titleByThreadId?.get(pane.threadId) || "Side";
-      } else if (pane.kind === "file" && pane.filePath) {
-        overrides[pane.id] = basenameOfPath(pane.filePath);
-      } else if (pane.kind === "pullRequest" && pane.pullRequestNumber !== null) {
-        overrides[pane.id] = pullRequestPaneTabLabel(pane.pullRequestNumber);
-      }
-    }
-    return overrides;
-  }, [threadSummaries, dockState.panes]);
-
-  // The pull request pane is a singleton, so at most one tab needs the live state glyph.
-  const pullRequestPane = dockState.panes.find(
-    (pane) => pane.kind === "pullRequest" && pullRequestDetailInputFromPane(pane) !== null,
-  );
-  const pullRequestPaneStateIcon = usePullRequestPaneStateIcon(
-    pullRequestPane ? pullRequestDetailInputFromPane(pullRequestPane) : null,
-  );
-  const paneIconOverrides =
-    pullRequestPane && pullRequestPaneStateIcon
-      ? { [pullRequestPane.id]: pullRequestPaneStateIcon }
-      : undefined;
-
-  const shouldAcceptDockWidth = useCallback(
-    ({ nextWidth, wrapper }: { nextWidth: number; wrapper: HTMLElement }) => {
-      const previousSidebarWidth = wrapper.style.getPropertyValue("--sidebar-width");
-      return canComposerHandlePanelWidth({
-        nextWidth,
-        // The dock coexists only with the single-pane chat, but dock sidechat
-        // panes mount their own composer forms — scope the probe so it always
-        // measures the main composer instead of "first form in the document".
-        paneScopeId: SINGLE_CHAT_PANE_SCOPE_ID,
-        applyWidth: (width) => {
-          wrapper.style.setProperty("--sidebar-width", `${width}px`);
-        },
-        resetWidth: () => {
-          if (previousSidebarWidth.length > 0) {
-            wrapper.style.setProperty("--sidebar-width", previousSidebarWidth);
-          } else {
-            wrapper.style.removeProperty("--sidebar-width");
-          }
-        },
-      });
-    },
-    [],
-  );
-
-  const handleAddDockPane = useCallback(
-    (kind: RightDockPaneKind) => {
-      requestImmediateDockHydration(kind);
-      if (kind === "sidechat") {
-        // Sidechat spawns a thread; reuse the composer's /side flow (correct model
-        // selection) published via the registry instead of opening an empty pane.
-        const createSidechat = getSidechatCreator(props.threadId);
-        if (!createSidechat) {
-          toastManager.add({
-            type: "warning",
-            title: "Side is unavailable",
-            description: "Open a server-backed main thread before starting Side.",
-          });
-          return;
-        }
-        void createSidechat().catch((error) => {
-          toastManager.add({
-            type: "error",
-            title: "Could not start Side",
-            description:
-              error instanceof Error ? error.message : "An error occurred while creating Side.",
-          });
-        });
-        return;
-      }
-      openPane(props.threadId, { kind });
-    },
-    [openPane, props.threadId, requestImmediateDockHydration],
-  );
-
-  const renderDockPane = useCallback(
-    (
-      pane: RightDockPane,
-      context: { runtimeMode: DockPaneRuntimeMode; isActive: boolean; isVisible: boolean },
-    ): ReactNode => {
-      switch (pane.kind) {
-        case "browser":
-          return (
-            <Suspense fallback={<PanelStateMessage>Loading browser...</PanelStateMessage>}>
-              <BrowserPanel
-                mode="sidebar"
-                threadId={props.threadId}
-                onClosePanel={() => closePane(props.threadId, pane.id)}
-                runtimeMode={context.runtimeMode}
-                onRequestLive={requestActiveDockPaneLive}
-              />
-            </Suspense>
-          );
-        case "pullRequest":
-          return (
-            <Suspense fallback={<PanelStateMessage>Loading pull request...</PanelStateMessage>}>
-              <PullRequestDockPane
-                pane={pane}
-                pollingEnabled={context.isVisible}
-                onClose={() => closePane(props.threadId, pane.id)}
-              />
-            </Suspense>
-          );
-        case "diff":
-          return (
-            <LazyDiffPanel
-              mode="sidebar"
-              threadId={props.threadId}
-              panelState={{
-                panel: "diff",
-                diffTurnId: pane.diffTurnId,
-                diffFilePath: pane.diffFilePath,
-              }}
-              onUpdatePanelState={(patch) =>
-                updatePane(props.threadId, pane.id, {
-                  diffTurnId: patch.diffTurnId ?? null,
-                  diffFilePath: patch.diffFilePath ?? null,
-                })
-              }
-              onClosePanel={() => closePane(props.threadId, pane.id)}
-              liveRefreshEnabled={context.isActive && dockState.open}
-              queriesEnabled={context.isActive && dockState.open}
-            />
-          );
-        case "terminal":
-          if (context.runtimeMode === "preview") {
-            return <PanelStateMessage>Terminal is sleeping. Restoring shortly.</PanelStateMessage>;
-          }
-          // Kept mounted across tab switches; visibility toggles the xterm runtime
-          // instead of detaching/reattaching it (avoids the open-lag + fit flicker).
-          // Also sleep it while the dock is collapsed: a closed dock keeps the pane
-          // mounted (offcanvas is CSS-only), so without this the off-screen terminal
-          // would keep WebGL + resize observers alive for nothing.
-          return (
-            <Suspense fallback={<PanelStateMessage>Loading terminal...</PanelStateMessage>}>
-              <DockTerminalPane
-                hostThreadId={props.threadId}
-                projectId={props.projectId}
-                isActive={context.isActive && dockState.open}
-              />
-            </Suspense>
-          );
-        case "git":
-          return (
-            <Suspense fallback={<PanelStateMessage>Loading Git...</PanelStateMessage>}>
-              <GitPanel
-                hostThreadId={props.threadId}
-                projectId={props.projectId}
-                onClose={() => closePane(props.threadId, pane.id)}
-              />
-            </Suspense>
-          );
-        case "explorer":
-          return (
-            <Suspense fallback={<PanelStateMessage>Loading explorer...</PanelStateMessage>}>
-              <DockExplorerPane
-                workspaceRoot={workspaceRoot}
-                onReferenceInChat={handleReferenceInChat}
-                onAskWhyInChat={handleAskWhyInChat}
-                onCommentInChat={handleCommentInChat}
-              />
-            </Suspense>
-          );
-        case "file":
-          return (
-            <Suspense fallback={<PanelStateMessage>Loading file...</PanelStateMessage>}>
-              <DockFilePane
-                workspaceRoot={workspaceRoot}
-                filePath={pane.filePath}
-                onReferenceInChat={handleReferenceInChat}
-                onAskWhyInChat={handleAskWhyInChat}
-                onCommentInChat={handleCommentInChat}
-              />
-            </Suspense>
-          );
-        case "sidechat":
-          if (!pane.threadId) {
-            return <RightDockPanePlaceholder kind="sidechat" />;
-          }
-          if (context.runtimeMode === "preview") {
-            return null;
-          }
-          return (
-            <DeferredChatView
-              threadId={pane.threadId}
-              paneScopeId={dockSidechatPaneScopeId(pane.id)}
-              deferMount={false}
-              surfaceMode="split"
-              isFocusedPane={false}
-              panelState={DOCK_EMBEDDED_PANEL_STATE}
-              onToggleDiff={noop}
-              onToggleBrowser={noop}
-              onOpenBrowserUrl={noop}
-              onOpenTurnDiff={noop}
-              onCloseThreadPane={() => closePane(props.threadId, pane.id)}
-            />
-          );
-        default:
-          return <RightDockPanePlaceholder kind={pane.kind} />;
-      }
-    },
-    [
-      closePane,
-      dockState.open,
-      handleAskWhyInChat,
-      handleCommentInChat,
-      handleReferenceInChat,
-      props.projectId,
-      props.threadId,
-      requestActiveDockPaneLive,
-      updatePane,
-      workspaceRoot,
-    ],
-  );
-
-  const handleSelectDockPane = useCallback(
-    (paneId: string) => {
-      requestImmediateDockHydration(dockState.panes.find((pane) => pane.id === paneId)?.kind);
-      setActivePane(props.threadId, paneId);
-    },
-    [dockState.panes, props.threadId, requestImmediateDockHydration, setActivePane],
-  );
-
   // The editor file path arrives via the URL, so an attacker-crafted link can
   // carry traversal segments ("../../etc"). Treat unsafe values as no selection
   // so neither the ancestor prefetch nor the preview ever queries them.
@@ -2407,22 +2114,11 @@ function SingleChatSurface(props: {
             />
           </RouteInsetSurface>
         </ChatPaneDropOverlay>
-        <RightDock
-          state={dockState}
-          minWidth={SINGLE_PANEL_MIN_WIDTH}
-          defaultWidth={DIFF_INLINE_DEFAULT_WIDTH}
-          shouldAcceptWidth={shouldAcceptDockWidth}
-          addMenuKinds={RIGHT_DOCK_ADD_MENU_KINDS}
-          motionKey={props.threadId}
-          activePaneRuntimeMode={activePaneRuntimeMode}
-          {...(paneLabelOverrides ? { paneLabelOverrides } : {})}
-          {...(paneIconOverrides ? { paneIconOverrides } : {})}
-          onSelectPane={handleSelectDockPane}
-          onClosePane={(paneId) => closePane(props.threadId, paneId)}
-          onCollapse={() => setDockOpen(props.threadId, false)}
-          onOpenChange={(open) => setDockOpen(props.threadId, open)}
-          onAddPane={handleAddDockPane}
-          renderPane={renderDockPane}
+        <ThreadRightDock
+          threadId={props.threadId}
+          projectId={props.projectId}
+          workspaceRoot={workspaceRoot}
+          composerPaneScopeId={SINGLE_CHAT_PANE_SCOPE_ID}
         />
       </div>
     </WorkspaceFileOpenerContext.Provider>

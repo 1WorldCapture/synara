@@ -24,6 +24,8 @@ import { render } from "vitest-browser-react";
 import { useComposerDraftStore } from "../composerDraftStore";
 import { getRouter } from "../router";
 import { useStore } from "../store";
+import { useRightDockStore } from "../rightDockStore";
+import { resolveSplitViewThreadIds, useSplitViewStore } from "../splitViewStore";
 import {
   createShellSnapshotFromReadModel,
   flattenEffectRpcRequestPayload,
@@ -248,6 +250,7 @@ const worker = setupWorker(
         method === WS_METHODS.subscribeServerProviderStatuses ||
         method === WS_METHODS.subscribeServerSettings ||
         method === WS_METHODS.subscribeTerminalEvents ||
+        method === WS_METHODS.subscribeCanvasAgentPreviews ||
         method === WS_METHODS.subscribeOrchestrationDomainEvents ||
         method === WS_METHODS.subscribeProjectDevServerEvents ||
         method === WS_METHODS.subscribeAutomationEvents
@@ -416,6 +419,12 @@ describe("EventRouter scoped orchestration sync", () => {
       sidebarThreadSummaryById: {},
       threadsHydrated: false,
     });
+    useRightDockStore.setState({ dockStateByThreadId: {} });
+    useSplitViewStore.setState({
+      hasHydrated: true,
+      splitViewsById: {},
+      splitViewIdBySourceThreadId: {},
+    });
     useWorkspaceStore.setState({
       homeDir: null,
       workspacePages: [
@@ -437,6 +446,43 @@ describe("EventRouter scoped orchestration sync", () => {
 
   afterEach(() => {
     document.body.innerHTML = "";
+  });
+
+  it("retains archived dock state and clears it when the thread is deleted", async () => {
+    useRightDockStore.getState().openPane(THREAD_ID, { kind: "canvas", paneId: "canvas-pane" });
+    const splitViewId = useSplitViewStore.getState().createFromDrop({
+      sourceThreadId: THREAD_ID,
+      ownerProjectId: PROJECT_ID,
+      droppedThreadId: OTHER_THREAD_ID,
+      direction: "horizontal",
+      side: "second",
+    });
+    const mounted = await mountApp();
+
+    try {
+      sendShellEventPush({
+        kind: "thread-upserted",
+        sequence: 2,
+        thread: {
+          ...createShellSnapshotFromReadModel(fixture.snapshot).threads[0]!,
+          archivedAt: "2026-03-04T12:00:01.000Z",
+          updatedAt: "2026-03-04T12:00:01.000Z",
+        },
+      });
+      await new Promise((resolve) => window.setTimeout(resolve, 50));
+      expect(useRightDockStore.getState().dockStateByThreadId[THREAD_ID]?.activePaneId).toBe(
+        "canvas-pane",
+      );
+
+      sendShellEventPush({ kind: "thread-removed", sequence: 3, threadId: THREAD_ID });
+      await vi.waitFor(() => {
+        expect(useRightDockStore.getState().dockStateByThreadId[THREAD_ID]).toBeUndefined();
+        const splitView = useSplitViewStore.getState().splitViewsById[splitViewId];
+        expect(splitView ? resolveSplitViewThreadIds(splitView) : []).not.toContain(THREAD_ID);
+      });
+    } finally {
+      await mounted.cleanup();
+    }
   });
 
   it("drops duplicate thread events after the thread snapshot sequence advances", async () => {
