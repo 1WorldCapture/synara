@@ -995,7 +995,7 @@ export function CanvasWorkspaceView(props: {
           </div>
           {canvasLocked ? (
             <span className="rounded-full bg-amber-500/12 px-2 py-1 text-[10px] font-medium text-amber-700 dark:text-amber-300">
-              AI is drawing · pan and zoom only
+              AI is drawing
             </span>
           ) : null}
           {canvasLocked && !followingAgent ? (

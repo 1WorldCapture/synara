@@ -334,7 +334,7 @@ describe("CanvasWorkspaceView", () => {
         ],
       });
 
-      await expect.element(page.getByText("AI is drawing · pan and zoom only")).toBeInTheDocument();
+      await expect.element(page.getByText("AI is drawing")).toBeInTheDocument();
       await vi.waitFor(() =>
         expect(updateSceneMock).toHaveBeenCalledWith({
           elements: expect.arrayContaining([
@@ -394,7 +394,7 @@ describe("CanvasWorkspaceView", () => {
         operations: [],
       });
       await expect
-        .element(page.getByText("AI is drawing · pan and zoom only"))
+        .element(page.getByText("AI is drawing"))
         .not.toBeInTheDocument();
     } finally {
       await screen.unmount();
@@ -496,7 +496,7 @@ describe("CanvasWorkspaceView", () => {
         baseRevision: "revision-1",
         operations: [],
       });
-      await expect.element(page.getByText("AI is drawing · pan and zoom only")).toBeInTheDocument();
+      await expect.element(page.getByText("AI is drawing")).toBeInTheDocument();
 
       useStore.getState().applyOrchestrationEvents([
         {
@@ -559,7 +559,7 @@ describe("CanvasWorkspaceView", () => {
           captureUpdate: "NEVER",
         }),
       );
-      await expect.element(page.getByText("AI is drawing · pan and zoom only")).toBeInTheDocument();
+      await expect.element(page.getByText("AI is drawing")).toBeInTheDocument();
       expect(readDrawing).toHaveBeenCalledOnce();
     } finally {
       await screen.unmount();
