@@ -115,6 +115,11 @@ export const DEFAULT_SHORTCUT_FALLBACKS: ResolvedKeybindingsConfig = [
     whenAst: whenCreationAllowed,
   },
   {
+    command: "chat.newCanvas",
+    shortcut: commandShortcut("a", { altKey: true }),
+    whenAst: whenCreationAllowed,
+  },
+  {
     command: "chat.newCodex",
     shortcut: commandShortcut("x", { altKey: true }),
     whenAst: whenCreationAllowed,
@@ -546,17 +551,9 @@ export function shortcutLabelForCommand(
     return null;
   }
 
-  const shortcut = findEffectiveShortcutForCommand(keybindings, command, resolvedOptions);
-  if (shortcut) {
-    return formatShortcutLabel(shortcut, platform);
-  }
-
-  const fallbackShortcut = findEffectiveShortcutForCommand(
-    getFallbackBindings(keybindings),
-    command,
-    resolvedOptions,
-  );
-  return fallbackShortcut ? formatShortcutLabel(fallbackShortcut, platform) : null;
+  const effectiveBindings = [...getFallbackBindings(keybindings), ...keybindings];
+  const shortcut = findEffectiveShortcutForCommand(effectiveBindings, command, resolvedOptions);
+  return shortcut ? formatShortcutLabel(shortcut, platform) : null;
 }
 
 export function threadJumpCommandForIndex(index: number): ThreadJumpKeybindingCommand | null {

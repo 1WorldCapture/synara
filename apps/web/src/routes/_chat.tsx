@@ -21,6 +21,7 @@ import ThreadSidebar from "../components/Sidebar";
 import { isDedicatedWorkspaceView } from "../diffRouteSearch";
 import { isElectron } from "../env";
 import { useHandleNewChat } from "../hooks/useHandleNewChat";
+import { useHandleNewCanvasDrawing } from "../hooks/useHandleNewCanvasDrawing";
 import { useHandleNewStudioChat } from "../hooks/useHandleNewStudioChat";
 import { useTemporaryThreadLifecycle } from "../hooks/useTemporaryThreadLifecycle";
 import { useHandleNewThread } from "../hooks/useHandleNewThread";
@@ -234,6 +235,7 @@ function ChatRouteGlobalShortcuts() {
     projects,
   });
   const { handleNewChat } = useHandleNewChat();
+  const { handleNewCanvasDrawing } = useHandleNewCanvasDrawing();
   const { handleNewStudioChat } = useHandleNewStudioChat();
   const homeDir = useWorkspaceStore((state) => state.homeDir);
   const chatWorkspaceRoot = useWorkspaceStore((state) => state.chatWorkspaceRoot);
@@ -402,6 +404,15 @@ function ChatRouteGlobalShortcuts() {
         return;
       }
 
+      if (command === "chat.newCanvas") {
+        const target = resolveNewThreadTarget({ currentProjectId, latestUsableProjectId });
+        if (!target) return;
+        event.preventDefault();
+        event.stopPropagation();
+        void handleNewCanvasDrawing(target.projectId);
+        return;
+      }
+
       if (
         command === "chat.newClaude" ||
         command === "chat.newCodex" ||
@@ -469,6 +480,7 @@ function ChatRouteGlobalShortcuts() {
     commitRecentSwitcherSelection,
     currentProjectId,
     handleNewChatForActiveSurface,
+    handleNewCanvasDrawing,
     handleNewThread,
     keybindings,
     latestUsableProjectId,

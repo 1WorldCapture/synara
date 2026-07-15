@@ -81,6 +81,11 @@ const AVAILABLE_NOW_DEFINITIONS: readonly ShortcutDefinition[] = [
     description: "Create a thread that opens directly into terminal mode.",
   },
   {
+    command: "chat.newCanvas",
+    label: "New AI drawing",
+    description: "Create a drawing in the current project, or the most recent one.",
+  },
+  {
     command: "chat.newClaude",
     label: "New Claude thread",
     description: "Start a fresh thread with Claude selected.",

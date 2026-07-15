@@ -5930,6 +5930,22 @@ export default function Sidebar() {
                 }}
               />
               <SidebarIconButton
+                icon={PencilIcon}
+                label={`Create new drawing in ${project.name}`}
+                tooltip={
+                  newCanvasDrawingShortcutLabel
+                    ? `New AI drawing (${newCanvasDrawingShortcutLabel})`
+                    : "New AI drawing"
+                }
+                tooltipSide="top"
+                data-testid="new-canvas-drawing-button"
+                onClick={(event) => {
+                  event.preventDefault();
+                  event.stopPropagation();
+                  void handleNewCanvasDrawing(project.id);
+                }}
+              />
+              <SidebarIconButton
                 icon={NewThreadIcon}
                 label={`Create new thread in ${project.name}`}
                 tooltip={
@@ -6374,6 +6390,10 @@ export default function Sidebar() {
     shortcutLabelForCommand(keybindings, "chat.newChat") ??
     shortcutLabelForCommand(keybindings, "chat.newLocal");
   const newTerminalThreadShortcutLabel = shortcutLabelForCommand(keybindings, "chat.newTerminal");
+  const newCanvasDrawingShortcutLabel = shortcutLabelForCommand(keybindings, "chat.newCanvas", {
+    platform: navigator.platform,
+    context: { terminalFocus: false },
+  });
   const searchShortcutLabel =
     shortcutLabelForCommand(keybindings, "sidebar.search") ??
     (isMacPlatform(navigator.platform) ? "⌘K" : "Ctrl+K");

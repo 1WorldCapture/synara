@@ -221,6 +221,11 @@ const DEFAULT_BINDINGS = compile([
     whenAst: whenCreationAllowed,
   },
   {
+    shortcut: modShortcut("a", { altKey: true }),
+    command: "chat.newCanvas",
+    whenAst: whenCreationAllowed,
+  },
+  {
     shortcut: modShortcut("c", { altKey: true }),
     command: "chat.newClaude",
     whenAst: whenCreationAllowed,
@@ -753,6 +758,24 @@ describe("shortcutLabelForCommand", () => {
     );
   });
 
+  it("does not advertise a fallback shortcut claimed by a configured command", () => {
+    const bindings = compile([
+      {
+        shortcut: modShortcut("a", { altKey: true }),
+        command: "chat.newTerminal",
+        whenAst: whenNot(whenIdentifier("terminalFocus")),
+      },
+    ]);
+
+    assert.strictEqual(
+      shortcutLabelForCommand(bindings, "chat.newCanvas", {
+        platform: "MacIntel",
+        context: { terminalFocus: false },
+      }),
+      null,
+    );
+  });
+
   it("returns labels for non-terminal commands", () => {
     assert.strictEqual(
       shortcutLabelForCommand(DEFAULT_BINDINGS, "sidebar.addProject", "MacIntel"),
@@ -771,6 +794,10 @@ describe("shortcutLabelForCommand", () => {
     assert.strictEqual(
       shortcutLabelForCommand(DEFAULT_BINDINGS, "chat.newTerminal", "MacIntel"),
       "⇧⌘T",
+    );
+    assert.strictEqual(
+      shortcutLabelForCommand(DEFAULT_BINDINGS, "chat.newCanvas", "MacIntel"),
+      "⌥⌘A",
     );
     assert.strictEqual(shortcutLabelForCommand(DEFAULT_BINDINGS, "diff.toggle", "Linux"), "Ctrl+D");
     assert.strictEqual(
@@ -912,6 +939,16 @@ describe("chat/editor shortcuts", () => {
         context: { terminalFocus: false },
       }),
       "chat.newTerminal",
+    );
+  });
+
+  it("resolves chat.newCanvas shortcut", () => {
+    assert.strictEqual(
+      resolveShortcutCommand(event({ key: "a", metaKey: true, altKey: true }), DEFAULT_BINDINGS, {
+        platform: "MacIntel",
+        context: { terminalFocus: false },
+      }),
+      "chat.newCanvas",
     );
   });
 
@@ -1342,7 +1379,10 @@ describe("resolveShortcutCommand", () => {
 
   it("falls back to creation defaults with the macOS terminal-focus escape hatch", () => {
     const legacyBindings = DEFAULT_BINDINGS.filter(
-      (binding) => binding.command !== "chat.new" && binding.command !== "chat.newTerminal",
+      (binding) =>
+        binding.command !== "chat.new" &&
+        binding.command !== "chat.newTerminal" &&
+        binding.command !== "chat.newCanvas",
     );
     const macTerminal = { platform: "MacIntel", context: { terminalFocus: true } } as const;
     const linuxTerminal = { platform: "Linux", context: { terminalFocus: true } } as const;
@@ -1358,6 +1398,14 @@ describe("resolveShortcutCommand", () => {
         macTerminal,
       ),
       "chat.newTerminal",
+    );
+    assert.strictEqual(
+      resolveShortcutCommand(
+        event({ key: "a", metaKey: true, altKey: true }),
+        legacyBindings,
+        macTerminal,
+      ),
+      "chat.newCanvas",
     );
     assert.isNull(
       resolveShortcutCommand(event({ key: "n", ctrlKey: true }), legacyBindings, linuxTerminal),

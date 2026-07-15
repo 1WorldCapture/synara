@@ -21,6 +21,7 @@ import {
   ATTACHMENT_CANCEL_ROUTE_PATH,
   ATTACHMENT_UPLOAD_ROUTE_PATH,
 } from "@synara/shared/binaryTransfer";
+import { EMPTY_CANVAS_SCENE } from "@synara/shared/excalidrawScene";
 import { RouterProvider, createMemoryHistory } from "@tanstack/react-router";
 import { HttpResponse, http, ws } from "msw";
 import { setupWorker } from "msw/browser";
@@ -1067,6 +1068,13 @@ function resolveWsRpc(body: WsRequestEnvelope["body"]): unknown {
     return {
       entries: [],
       truncated: false,
+    };
+  }
+  if (tag === WS_METHODS.canvasCreateDrawing) {
+    return {
+      relativePath: `.synara/drawings/${String(body.threadId)}.excalidraw`,
+      scene: EMPTY_CANVAS_SCENE,
+      revision: "canvas-shortcut-revision",
     };
   }
   if (tag === WS_METHODS.terminalOpen) {
@@ -4731,6 +4739,82 @@ describe("ChatView timeline estimator parity (full app)", () => {
     } finally {
       await mounted.cleanup();
       restoreNativeApi();
+    }
+  });
+
+  it("creates an AI drawing from the configured global shortcut", async () => {
+    const mounted = await mountChatView({
+      viewport: DEFAULT_VIEWPORT,
+      snapshot: createSnapshotForTargetUser({
+        targetMessageId: "msg-user-canvas-shortcut-test" as MessageId,
+        targetText: "canvas shortcut test",
+      }),
+      configureFixture: (nextFixture) => {
+        nextFixture.serverConfig = {
+          ...nextFixture.serverConfig,
+          keybindings: [
+            {
+              command: "chat.newCanvas",
+              shortcut: {
+                key: "a",
+                metaKey: false,
+                ctrlKey: false,
+                shiftKey: false,
+                altKey: true,
+                modKey: true,
+              },
+              whenAst: {
+                type: "not",
+                node: { type: "identifier", name: "terminalFocus" },
+              },
+            },
+          ],
+        };
+      },
+    });
+
+    try {
+      await waitForServerConfigToApply();
+      const composerEditor = await waitForComposerEditor();
+      composerEditor.focus();
+      await waitForLayout();
+      dispatchConfiguredShortcut(window, { key: "a", altKey: true });
+
+      await vi.waitFor(
+        () => {
+          const createThreadRequest = wsRequests.find(
+            (request) =>
+              request._tag === ORCHESTRATION_WS_METHODS.dispatchCommand &&
+              typeof request.command === "object" &&
+              request.command !== null &&
+              "type" in request.command &&
+              "surface" in request.command &&
+              request.command.type === "thread.create" &&
+              request.command.surface === "canvas",
+          );
+          expect(createThreadRequest).toBeTruthy();
+          if (
+            !createThreadRequest ||
+            createThreadRequest._tag !== ORCHESTRATION_WS_METHODS.dispatchCommand ||
+            typeof createThreadRequest.command !== "object" ||
+            createThreadRequest.command === null ||
+            !("threadId" in createThreadRequest.command)
+          ) {
+            return;
+          }
+          expect(
+            wsRequests.some(
+              (request) =>
+                request._tag === WS_METHODS.canvasCreateDrawing &&
+                "threadId" in request &&
+                request.threadId === createThreadRequest.command.threadId,
+            ),
+          ).toBe(true);
+        },
+        { timeout: 8_000, interval: 16 },
+      );
+    } finally {
+      await mounted.cleanup();
     }
   });
 
