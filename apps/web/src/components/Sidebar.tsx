@@ -179,6 +179,7 @@ import { SidebarLeadingControls } from "./SidebarHeaderNavigationControls";
 import { ProjectSidebarIcon } from "./ProjectSidebarIcon";
 import { ThreadHoverCardContent } from "./ThreadHoverCardContent";
 import { ProjectHoverCardContent } from "./ProjectHoverCardContent";
+import { SidebarThreadSurfaceIcon } from "./SidebarThreadSurfaceIcon";
 import {
   SIDEBAR_HOVER_CARD_POPUP_PROPS,
   SIDEBAR_HOVER_CARD_SURFACE_CLASS_NAME,
@@ -5366,6 +5367,7 @@ export default function Sidebar() {
                 terminalCount={terminalCount}
               />
             ) : null}
+            <SidebarThreadSurfaceIcon surface={thread.surface} isActive={isActive} />
             <div className="flex min-w-0 flex-1 items-center gap-1.5 text-left">
               <span
                 className={cn(
@@ -5625,6 +5627,7 @@ export default function Sidebar() {
                 terminalCount={terminalCount}
               />
             ) : null}
+            <SidebarThreadSurfaceIcon surface={thread.surface} isActive={isActive} />
             <div
               className={cn(
                 "flex min-w-0 flex-1 items-center text-left",

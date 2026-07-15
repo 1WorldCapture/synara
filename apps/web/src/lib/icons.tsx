@@ -57,6 +57,7 @@ import {
   IconMoon,
   IconPalette,
   IconPaperclip,
+  IconPencil,
   IconPlayerPlay,
   IconPlayerStop,
   IconPlayerStopFilled,
@@ -172,6 +173,7 @@ export const EllipsisIcon = adaptIcon(IconDots);
 export const ExternalLinkIcon = adaptIcon(IconExternalLink);
 export const EyeIcon = adaptIcon(IconEye);
 export const PaletteIcon = adaptIcon(IconPalette);
+export const CanvasIcon = adaptIcon(IconPencil);
 export const PaperclipIcon = adaptIcon(IconPaperclip);
 export const AdjustmentsIcon = adaptIcon(IconAdjustments);
 export const ArchiveIcon = adaptIcon(IconArchive);
