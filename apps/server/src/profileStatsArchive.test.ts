@@ -1190,8 +1190,15 @@ describe("ProfileStatsArchive", () => {
           "thread-retention",
         ]);
 
-        const purgedCount = yield* archive.purgeSoftDeletedManualThreads();
+        const purgedCount = yield* archive.purgeSoftDeletedManualThreads({
+          beforePurge: (threadId) =>
+            Effect.sync(() => {
+              deferredThreadIds.push(threadId);
+              return true;
+            }),
+        });
         expect(purgedCount).toBe(1);
+        expect(deferredThreadIds).toEqual(["thread-manual", "thread-manual"]);
 
         const threadRows = yield* sql<{ readonly threadId: string }>`
           SELECT thread_id AS threadId FROM projection_threads ORDER BY thread_id ASC

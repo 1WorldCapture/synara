@@ -3061,15 +3061,11 @@ export default function Sidebar() {
       const deletedPaneInActiveSplit = activeSplitView
         ? resolveSplitViewPaneIdForThread(activeSplitView, threadId)
         : null;
-      if (thread.surface === "canvas") {
-        await api.canvas.deleteDrawing({ threadId });
-      } else {
-        await api.orchestration.dispatchCommand({
-          type: "thread.delete",
-          commandId: newCommandId(),
-          threadId,
-        });
-      }
+      await api.orchestration.dispatchCommand({
+        type: "thread.delete",
+        commandId: newCommandId(),
+        threadId,
+      });
       if (opts.reconcileDeletedThread ?? true) {
         void reconcileDeletedThreadFromClient({
           threadId,

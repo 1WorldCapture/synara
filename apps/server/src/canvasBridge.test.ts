@@ -15,7 +15,7 @@ import {
   subscribeCanvasAgentPreviews,
   subscribeCanvasDrawingChanges,
 } from "./canvasBridge";
-import { createCanvasDrawing } from "./canvasDrawingFiles";
+import { createCanvasDrawing, hardDeleteCanvasDrawing } from "./canvasDrawingFiles";
 
 const roots: string[] = [];
 
@@ -54,6 +54,55 @@ describe("canvas bridge capabilities", () => {
     expect(authorizeCanvasBridgeCapability(first.token, "drawing-1")).toBeNull();
     expect(authorizeCanvasBridgeCapability(second.token, "drawing-1")).toBeNull();
     expect(authorizeCanvasBridgeCapability(other.token, "drawing-2")).not.toBeNull();
+  });
+
+  it("does not let a stale token recreate a Drawing after parent deletion starts", async () => {
+    const root = await mkdtemp(path.join(tmpdir(), "synara-canvas-bridge-delete-"));
+    roots.push(root);
+    const threadId = "drawing-deleted-parent";
+    const drawingPath = path.join(root, "drawings", `${threadId}.excalidraw`);
+    const drawing = await createCanvasDrawing({ root, threadId });
+    const grant = issueCanvasBridgeCapability({ root, threadId });
+    const server = await startCanvasBridgeServer();
+    try {
+      const previewResponse = await fetch(`${server.baseUrl}/internal/canvas/preview`, {
+        method: "POST",
+        headers: {
+          authorization: `Bearer ${grant.token}`,
+          "content-type": "application/json",
+        },
+        body: JSON.stringify({
+          threadId,
+          streamId: "stream-before-delete",
+          sequence: 0,
+          phase: "start",
+          baseRevision: drawing.revision,
+          operations: [],
+        }),
+      });
+      expect(previewResponse.status).toBe(202);
+      revokeCanvasBridgeCapabilitiesForThread(threadId);
+      expect(await hardDeleteCanvasDrawing({ root, threadId })).toBe(true);
+
+      const replayed: string[] = [];
+      const unsubscribe = subscribeCanvasAgentPreviews((event) => replayed.push(event.streamId));
+      expect(replayed).toEqual([]);
+      unsubscribe();
+
+      const response = await fetch(`${server.baseUrl}/internal/canvas/read`, {
+        method: "POST",
+        headers: {
+          authorization: `Bearer ${grant.token}`,
+          "content-type": "application/json",
+        },
+        body: JSON.stringify({ threadId }),
+      });
+
+      expect(response.status).toBe(403);
+      await expect(access(drawingPath)).rejects.toMatchObject({ code: "ENOENT" });
+    } finally {
+      await server.close();
+    }
   });
 
   it("serves capability-scoped drawings on an independent loopback listener", async () => {

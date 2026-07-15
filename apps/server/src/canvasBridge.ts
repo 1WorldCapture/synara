@@ -299,6 +299,7 @@ export function revokeCanvasBridgeCapabilitiesForThread(threadId: string): numbe
     grants.delete(token);
     revoked += 1;
   }
+  agentPreviewStates.delete(threadId);
   return revoked;
 }
 

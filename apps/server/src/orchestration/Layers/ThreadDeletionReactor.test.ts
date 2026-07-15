@@ -3,9 +3,70 @@ import { Cause, Effect, Exit } from "effect";
 import { describe, expect, it } from "vitest";
 
 import {
+  cleanupThreadResources,
   cleanupSucceededUnlessInterrupted,
   logCleanupCauseUnlessInterrupted,
 } from "./ThreadDeletionReactor";
+
+describe("cleanupThreadResources", () => {
+  it("revokes access and cleans every child resource in failure-safe order", async () => {
+    const calls: string[] = [];
+    const result = await Effect.runPromise(
+      cleanupThreadResources({
+        revokeCanvasAccess: () => calls.push("revoke-canvas"),
+        stopProviderSession: Effect.sync(() => {
+          calls.push("stop-provider");
+          return true;
+        }),
+        closeTerminals: Effect.sync(() => {
+          calls.push("close-terminals");
+          return true;
+        }),
+        deleteDrawing: Effect.sync(() => {
+          calls.push("delete-drawing");
+          return true;
+        }),
+      }),
+    );
+
+    expect(result).toBe(true);
+    expect(calls).toEqual([
+      "revoke-canvas",
+      "stop-provider",
+      "close-terminals",
+      "delete-drawing",
+    ]);
+  });
+
+  it("runs all cleanup steps but defers purge when Drawing deletion fails", async () => {
+    const calls: string[] = [];
+    const result = await Effect.runPromise(
+      cleanupThreadResources({
+        revokeCanvasAccess: () => calls.push("revoke-canvas"),
+        stopProviderSession: Effect.sync(() => {
+          calls.push("stop-provider");
+          return true;
+        }),
+        closeTerminals: Effect.sync(() => {
+          calls.push("close-terminals");
+          return true;
+        }),
+        deleteDrawing: Effect.sync(() => {
+          calls.push("delete-drawing");
+          return false;
+        }),
+      }),
+    );
+
+    expect(result).toBe(false);
+    expect(calls).toEqual([
+      "revoke-canvas",
+      "stop-provider",
+      "close-terminals",
+      "delete-drawing",
+    ]);
+  });
+});
 
 describe("logCleanupCauseUnlessInterrupted", () => {
   const threadId = ThreadId.makeUnsafe("thread-deletion-reactor-test");

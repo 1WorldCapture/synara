@@ -3,6 +3,10 @@ import { makeDrainableWorker, startDrainableWorkerProducers } from "@synara/shar
 import { Cause, Effect, Layer, Stream } from "effect";
 
 import { ProfileStatsArchive } from "../../profileStatsArchive";
+import { revokeCanvasBridgeCapabilitiesForThread } from "../../canvasBridge";
+import { hardDeleteCanvasDrawing } from "../../canvasDrawingFiles";
+import { resolveCanvasDrawingRef } from "../../canvasDrawingStorage";
+import { ServerConfig } from "../../config";
 import { ProviderService } from "../../provider/Services/ProviderService";
 import { TerminalManager } from "../../terminal/Services/Manager";
 import { THREAD_RETENTION_COMMAND_ID_PREFIX } from "../../threadRetention";
@@ -66,11 +70,27 @@ export const cleanupSucceededUnlessInterrupted = <R, E>({
     }),
   );
 
+export function cleanupThreadResources<PR, PE, TR, TE, DR, DE>(input: {
+  readonly revokeCanvasAccess: () => unknown;
+  readonly stopProviderSession: Effect.Effect<boolean, PE, PR>;
+  readonly closeTerminals: Effect.Effect<boolean, TE, TR>;
+  readonly deleteDrawing: Effect.Effect<boolean, DE, DR>;
+}): Effect.Effect<boolean, PE | TE | DE, PR | TR | DR> {
+  return Effect.gen(function* () {
+    yield* Effect.sync(input.revokeCanvasAccess);
+    const providerCleanupSucceeded = yield* input.stopProviderSession;
+    const terminalCleanupSucceeded = yield* input.closeTerminals;
+    const drawingCleanupSucceeded = yield* input.deleteDrawing;
+    return providerCleanupSucceeded && terminalCleanupSucceeded && drawingCleanupSucceeded;
+  });
+}
+
 const make = Effect.gen(function* () {
   const orchestrationEngine = yield* OrchestrationEngineService;
   const profileStatsArchive = yield* ProfileStatsArchive;
   const providerService = yield* ProviderService;
   const terminalManager = yield* TerminalManager;
+  const config = yield* ServerConfig;
 
   const refreshCommandReadModelAfterPurge = (threadId: string) =>
     orchestrationEngine.refreshCommandReadModel().pipe(
@@ -136,6 +156,15 @@ const make = Effect.gen(function* () {
     return false;
   });
 
+  const deleteThreadDrawing = (threadId: ThreadDeletedEvent["payload"]["threadId"]) =>
+    cleanupSucceededUnlessInterrupted({
+      effect: Effect.tryPromise(() =>
+        hardDeleteCanvasDrawing(resolveCanvasDrawingRef({ stateDir: config.stateDir, threadId })),
+      ).pipe(Effect.asVoid),
+      message: "thread deletion cleanup skipped Drawing hard delete",
+      threadId,
+    });
+
   // Retention deletes only hide the thread (its rows keep feeding profile
   // stats directly). Explicit deletes snapshot the stat aggregates and then
   // hard-delete the thread's rows so disk space is actually reclaimed.
@@ -168,9 +197,12 @@ const make = Effect.gen(function* () {
   const cleanupThreadBeforePurge = Effect.fn(function* (
     threadId: ThreadDeletedEvent["payload"]["threadId"],
   ) {
-    const providerCleanupSucceeded = yield* stopProviderSession(threadId);
-    const terminalCleanupSucceeded = yield* closeThreadTerminals(threadId);
-    return providerCleanupSucceeded && terminalCleanupSucceeded;
+    return yield* cleanupThreadResources({
+      revokeCanvasAccess: () => revokeCanvasBridgeCapabilitiesForThread(threadId),
+      stopProviderSession: stopProviderSession(threadId),
+      closeTerminals: closeThreadTerminals(threadId),
+      deleteDrawing: deleteThreadDrawing(threadId),
+    });
   });
 
   const processThreadDeleted = Effect.fn(function* (event: ThreadDeletedEvent) {
