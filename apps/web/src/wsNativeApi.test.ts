@@ -338,19 +338,21 @@ describe("wsNativeApi", () => {
     expect(lateListener).toHaveBeenCalledWith(payload);
   });
 
-  it("forwards valid terminal and orchestration events", async () => {
+  it("forwards valid terminal, canvas, and orchestration events", async () => {
     const { createWsNativeApi } = await import("./wsNativeApi");
 
     const api = createWsNativeApi();
     const onTerminalEvent = vi.fn();
     const onDomainEvent = vi.fn();
     const onActionProgress = vi.fn();
+    const onDrawingChanged = vi.fn();
 
     api.terminal.onEvent(onTerminalEvent);
     expect(channelListeners.has(ORCHESTRATION_WS_CHANNELS.domainEvent)).toBe(false);
     const unsubscribeDomainEvent = api.orchestration.onDomainEvent(onDomainEvent);
     expect(channelListeners.get(ORCHESTRATION_WS_CHANNELS.domainEvent)?.size).toBe(1);
     api.git.onActionProgress(onActionProgress);
+    api.canvas.onDrawingChanged(onDrawingChanged);
 
     const terminalEvent = {
       threadId: "thread-1",
@@ -360,6 +362,11 @@ describe("wsNativeApi", () => {
       data: "hello",
     } as const;
     emitPush(WS_CHANNELS.terminalEvent, terminalEvent);
+    const drawingChangedEvent = {
+      threadId: ThreadId.makeUnsafe("drawing-1"),
+      revision: "revision-2",
+    };
+    emitPush(WS_CHANNELS.canvasDrawingChanged, drawingChangedEvent);
 
     const orchestrationEvent = {
       sequence: 1,
@@ -395,6 +402,7 @@ describe("wsNativeApi", () => {
 
     expect(onTerminalEvent).toHaveBeenCalledTimes(1);
     expect(onTerminalEvent).toHaveBeenCalledWith(terminalEvent);
+    expect(onDrawingChanged).toHaveBeenCalledWith(drawingChangedEvent);
     expect(onDomainEvent).toHaveBeenCalledTimes(1);
     expect(onDomainEvent).toHaveBeenCalledWith(orchestrationEvent);
     unsubscribeDomainEvent();

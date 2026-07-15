@@ -1,7 +1,7 @@
 import { createHash, randomBytes, timingSafeEqual } from "node:crypto";
 import { createServer } from "node:http";
 
-import type { CanvasDrawingRef } from "@synara/contracts";
+import type { CanvasDrawingChangedEvent, CanvasDrawingRef } from "@synara/contracts";
 import { MAX_CANVAS_SCENE_BYTES } from "@synara/shared/excalidrawScene";
 
 import {
@@ -19,6 +19,24 @@ interface CanvasBridgeGrant extends CanvasDrawingRef {
 }
 
 const grants = new Map<string, CanvasBridgeGrant>();
+const drawingChangedListeners = new Set<(event: CanvasDrawingChangedEvent) => void>();
+
+function publishCanvasDrawingChanged(event: CanvasDrawingChangedEvent): void {
+  for (const listener of drawingChangedListeners) {
+    try {
+      listener(event);
+    } catch {
+      // One renderer subscriber must not fail an agent save.
+    }
+  }
+}
+
+export function subscribeCanvasDrawingChanges(
+  listener: (event: CanvasDrawingChangedEvent) => void,
+): () => void {
+  drawingChangedListeners.add(listener);
+  return () => drawingChangedListeners.delete(listener);
+}
 
 function tokenKey(token: string): string {
   return createHash("sha256").update(token).digest("hex");
@@ -66,6 +84,7 @@ export function authorizeCanvasBridgeCapability(
 
 export function resetCanvasBridgeCapabilitiesForTest(): void {
   grants.clear();
+  drawingChangedListeners.clear();
 }
 
 function isLoopbackAddress(address: string | undefined): boolean {
@@ -137,15 +156,16 @@ export function startCanvasBridgeServer(): Promise<CanvasBridgeServer> {
             response.writeHead(400).end("Bad Request");
             return;
           }
-          sendJson(
-            response,
-            200,
-            await saveCanvasDrawing({
-              ...drawing,
-              expectedRevision: record.expectedRevision,
-              scene: record.scene as never,
-            }),
-          );
+          const snapshot = await saveCanvasDrawing({
+            ...drawing,
+            expectedRevision: record.expectedRevision,
+            scene: record.scene as never,
+          });
+          publishCanvasDrawingChanged({
+            threadId: drawing.threadId,
+            revision: snapshot.revision,
+          });
+          sendJson(response, 200, snapshot);
           return;
         }
         response.writeHead(404).end("Not Found");

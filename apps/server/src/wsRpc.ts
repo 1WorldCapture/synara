@@ -15,6 +15,7 @@ import {
   PullRequestsUnavailableError,
   type GitActionProgressEvent,
   type OrchestrationCommand,
+  type CanvasDrawingChangedEvent,
   type OrchestrationEvent,
   type ProjectDevServerEvent,
   type OrchestrationShellStreamEvent,
@@ -46,6 +47,7 @@ import {
   saveCanvasDrawing,
   trashCanvasDrawing,
 } from "./canvasDrawingFiles";
+import { subscribeCanvasDrawingChanges } from "./canvasBridge";
 import { SessionCredentialService } from "./auth/Services/SessionCredentialService";
 import { CheckpointDiffQuery } from "./checkpointing/Services/CheckpointDiffQuery";
 import { resolveThreadWorkspaceCwd } from "./checkpointing/Utils";
@@ -880,6 +882,17 @@ const makeWsRpcHandlersLayer = () =>
               ),
             ),
             "Failed to delete canvas drawing",
+          ),
+        [WS_METHODS.subscribeCanvasDrawingChanges]: () =>
+          Stream.callback((queue) =>
+            Effect.gen(function* () {
+              const unsubscribe = subscribeCanvasDrawingChanges(
+                (event: CanvasDrawingChangedEvent) => {
+                  Effect.runFork(Queue.offer(queue, event).pipe(Effect.asVoid));
+                },
+              );
+              yield* Effect.addFinalizer(() => Effect.sync(unsubscribe));
+            }),
           ),
         [WS_METHODS.projectsRunDevServer]: (input) =>
           rpcEffect(devServerManager.run(input), "Failed to start dev server"),

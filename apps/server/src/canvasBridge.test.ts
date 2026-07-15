@@ -11,6 +11,7 @@ import {
   resetCanvasBridgeCapabilitiesForTest,
   revokeCanvasBridgeCapability,
   startCanvasBridgeServer,
+  subscribeCanvasDrawingChanges,
 } from "./canvasBridge";
 import { createCanvasDrawing } from "./canvasDrawingFiles";
 
@@ -45,6 +46,8 @@ describe("canvas bridge capabilities", () => {
     const snapshot = await createCanvasDrawing({ cwd, threadId: "drawing-loopback" });
     const grant = issueCanvasBridgeCapability({ cwd, threadId: "drawing-loopback" });
     const server = await startCanvasBridgeServer();
+    const drawingChanges: Array<{ threadId: string; revision: string }> = [];
+    const unsubscribe = subscribeCanvasDrawingChanges((event) => drawingChanges.push(event));
     try {
       const response = await fetch(`${server.baseUrl}/internal/canvas/read`, {
         method: "POST",
@@ -59,7 +62,29 @@ describe("canvas bridge capabilities", () => {
         revision: snapshot.revision,
         scene: EMPTY_CANVAS_SCENE,
       });
+
+      const saveResponse = await fetch(`${server.baseUrl}/internal/canvas/save`, {
+        method: "POST",
+        headers: {
+          authorization: `Bearer ${grant.token}`,
+          "content-type": "application/json",
+        },
+        body: JSON.stringify({
+          threadId: "drawing-loopback",
+          expectedRevision: snapshot.revision,
+          scene: {
+            ...EMPTY_CANVAS_SCENE,
+            elements: [{ id: "agent-element", type: "rectangle" }],
+          },
+        }),
+      });
+      expect(saveResponse.status).toBe(200);
+      const saved = (await saveResponse.json()) as { revision: string };
+      expect(drawingChanges).toEqual([
+        { threadId: "drawing-loopback", revision: saved.revision },
+      ]);
     } finally {
+      unsubscribe();
       await server.close();
     }
   });

@@ -8,6 +8,7 @@ import {
   WsCanvasCreateDrawingRpc,
   WsProjectsDiscoverScriptsRpc,
   WsPullRequestsReviewRequestCountRpc,
+  WsSubscribeCanvasDrawingChangesRpc,
   WsRpcError,
   WsRpcGroup,
 } from "./rpc";
@@ -48,5 +49,8 @@ describe("WS RPC contracts", () => {
     expect(WsRpcGroup.requests.get(WS_METHODS.canvasReadDrawing)).toBeDefined();
     expect(WsRpcGroup.requests.get(WS_METHODS.canvasSaveDrawing)).toBeDefined();
     expect(WsRpcGroup.requests.get(WS_METHODS.canvasDeleteDrawing)).toBeDefined();
+    expect(WsRpcGroup.requests.get(WS_METHODS.subscribeCanvasDrawingChanges)).toBe(
+      WsSubscribeCanvasDrawingChangesRpc,
+    );
   });
 });

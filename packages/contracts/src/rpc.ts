@@ -19,6 +19,7 @@ import {
   AutomationUpdateInput,
 } from "./automation";
 import {
+  CanvasDrawingChangedEvent,
   CanvasDrawingCreateInput,
   CanvasDrawingDeleteInput,
   CanvasDrawingReadInput,
@@ -420,6 +421,16 @@ export const WsCanvasDeleteDrawingRpc = Rpc.make(WS_METHODS.canvasDeleteDrawing,
   success: CanvasDrawingDeleteResultSchema,
   error: WsRpcError,
 });
+
+export const WsSubscribeCanvasDrawingChangesRpc = Rpc.make(
+  WS_METHODS.subscribeCanvasDrawingChanges,
+  {
+    payload: Schema.Struct({}),
+    success: CanvasDrawingChangedEvent,
+    error: WsRpcError,
+    stream: true,
+  },
+);
 
 export const WsSubscribeProjectDevServerEventsRpc = Rpc.make(
   WS_METHODS.subscribeProjectDevServerEvents,
@@ -975,6 +986,7 @@ export const WsFeatureRpcGroup = RpcGroup.make(
   WsCanvasReadDrawingRpc,
   WsCanvasSaveDrawingRpc,
   WsCanvasDeleteDrawingRpc,
+  WsSubscribeCanvasDrawingChangesRpc,
   WsSubscribeProjectDevServerEventsRpc,
   WsStudioListThreadOutputsRpc,
   WsFilesystemBrowseRpc,

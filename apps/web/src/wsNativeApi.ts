@@ -16,6 +16,7 @@ import {
   type AuthRevokePairingLinkInput,
   type AuthSessionState,
   type AuthWebSocketTokenResult,
+  type CanvasDrawingChangedEvent,
   type ThreadId,
   type ThreadBrowserState,
   type GitActionProgressEvent,
@@ -116,6 +117,7 @@ function omitNullUserInputAnswers(
 }
 const terminalEventListeners = createListenerRegistry<TerminalEvent>();
 const projectDevServerEventListeners = createListenerRegistry<ProjectDevServerEvent>();
+const canvasDrawingChangedListeners = createListenerRegistry<CanvasDrawingChangedEvent>();
 const automationEventListeners = createListenerRegistry<AutomationStreamEvent>();
 const orchestrationDomainEventListeners = createListenerRegistry<OrchestrationEvent>();
 const orchestrationShellEventListeners = createListenerRegistry<OrchestrationShellStreamItem>();
@@ -132,6 +134,7 @@ function clearWsNativeApiListeners(): void {
   gitActionProgressListeners.clear();
   terminalEventListeners.clear();
   projectDevServerEventListeners.clear();
+  canvasDrawingChangedListeners.clear();
   automationEventListeners.clear();
   orchestrationDomainEventListeners.clear();
   orchestrationShellEventListeners.clear();
@@ -399,6 +402,9 @@ export function createWsNativeApi(): NativeApi {
   transport.subscribe(WS_CHANNELS.projectDevServerEvent, (message) => {
     projectDevServerEventListeners.emit(message.data);
   });
+  transport.subscribe(WS_CHANNELS.canvasDrawingChanged, (message) => {
+    canvasDrawingChangedListeners.emit(message.data);
+  });
   transport.subscribe(WS_CHANNELS.automationEvent, (message) => {
     automationEventListeners.emit(message.data);
   });
@@ -464,6 +470,7 @@ export function createWsNativeApi(): NativeApi {
       readDrawing: (input) => transport.request(WS_METHODS.canvasReadDrawing, input),
       saveDrawing: (input) => transport.request(WS_METHODS.canvasSaveDrawing, input),
       deleteDrawing: (input) => transport.request(WS_METHODS.canvasDeleteDrawing, input),
+      onDrawingChanged: canvasDrawingChangedListeners.subscribe,
     },
     filesystem: {
       browse: (input) => transport.request(WS_METHODS.filesystemBrowse, input),

@@ -41,6 +41,7 @@ import { ChatHeaderButton } from "./chat/chatHeaderControls";
 import { toastManager } from "./ui/toast";
 
 type SaveState = "loading" | "saved" | "saving" | "conflict" | "error";
+type DrawingSyncMode = "foreground" | "live" | "settled";
 type PendingSceneChange =
   | { readonly kind: "serialized"; readonly scene: CanvasScene }
   | {
@@ -51,6 +52,26 @@ type PendingSceneChange =
     };
 
 const AUTOSAVE_DELAY_MS = 500;
+const FINAL_SYNC_RETRY_DELAYS_MS = [100, 500, 1_500, 5_000] as const;
+
+function waitForFinalSyncRetry(delayMs: number, signal: AbortSignal): Promise<boolean> {
+  return new Promise((resolve) => {
+    if (signal.aborted) {
+      resolve(false);
+      return;
+    }
+    let timer: ReturnType<typeof setTimeout>;
+    const onAbort = () => {
+      clearTimeout(timer);
+      resolve(false);
+    };
+    timer = setTimeout(() => {
+      signal.removeEventListener("abort", onAbort);
+      resolve(true);
+    }, delayMs);
+    signal.addEventListener("abort", onAbort, { once: true });
+  });
+}
 
 function toCanvasScene(elements: readonly unknown[], appState: unknown, files: unknown): CanvasScene {
   const scene = JSON.parse(
@@ -147,71 +168,119 @@ export function CanvasWorkspaceView(props: {
     latestTurn: thread?.latestTurn ?? null,
     activities: thread?.activities ?? [],
   });
-
   const excalidrawApiRef = useRef<ExcalidrawImperativeAPI | null>(null);
   const revisionRef = useRef<string | null>(null);
-  const persistedSceneJsonRef = useRef<string | null>(null);
+  const renderedSceneJsonRef = useRef<string | null>(null);
   const pendingSceneRef = useRef<PendingSceneChange | null>(null);
   const saveTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
-  const saveChainRef = useRef<Promise<void>>(Promise.resolve());
+  const drawingIoChainRef = useRef<Promise<void>>(Promise.resolve());
+  const localSceneGenerationRef = useRef(0);
+  const latestNotifiedRevisionRef = useRef<string | null>(null);
+  const liveSyncQueuedRef = useRef(false);
   const applyingRemoteSceneRef = useRef(false);
   const conflictRef = useRef(false);
-  const lastReloadedMutationTurnIdRef = useRef<TurnId | null>(
-    thread?.latestTurn?.state === "running" ? null : mutationTurnId,
+  const pendingFinalReloadTurnIdRef = useRef<TurnId | null>(
+    thread?.latestTurn?.state === "running" && agentEditing ? thread.latestTurn.turnId : null,
   );
+  const finalSyncInFlightTurnIdRef = useRef<TurnId | null>(null);
+  const finalSyncAbortControllerRef = useRef<AbortController | null>(null);
+  const lastSettledMutationTurnIdRef = useRef<TurnId | null>(null);
   const [initialScene, setInitialScene] = useState<CanvasScene | null>(null);
   const [saveState, setSaveState] = useState<SaveState>("loading");
 
-  const applySnapshot = useCallback(
-    (snapshot: CanvasDrawingSnapshot) => {
+  const recordSnapshotMetadata = useCallback(
+    (snapshot: CanvasDrawingSnapshot, renderedScene = snapshot.scene) => {
       revisionRef.current = snapshot.revision;
-      persistedSceneJsonRef.current = JSON.stringify(snapshot.scene);
+      renderedSceneJsonRef.current = JSON.stringify(renderedScene);
+    },
+    [],
+  );
+
+  const applySnapshot = useCallback(
+    (snapshot: CanvasDrawingSnapshot, displayScene = snapshot.scene) => {
+      recordSnapshotMetadata(snapshot, displayScene);
       pendingSceneRef.current = null;
       conflictRef.current = false;
       applyingRemoteSceneRef.current = true;
-      setInitialScene(snapshot.scene);
       const api = excalidrawApiRef.current;
       if (api) {
         api.updateScene({
-          elements: snapshot.scene.elements as never,
-          appState: snapshot.scene.appState as never,
+          elements: displayScene.elements as never,
+          appState: displayScene.appState as never,
         });
-        if (snapshot.scene.files) {
-          api.addFiles(Object.values(snapshot.scene.files) as never);
+        if (displayScene.files) {
+          api.addFiles(Object.values(displayScene.files) as never);
         }
+      } else {
+        setInitialScene(displayScene);
       }
       requestAnimationFrame(() => {
         applyingRemoteSceneRef.current = false;
       });
       setSaveState("saved");
     },
-    [],
+    [recordSnapshotMetadata],
   );
 
-  const reloadDrawing = useCallback(async () => {
-    const api = readNativeApi();
-    if (!api) return;
-    setSaveState("loading");
-    try {
-      let snapshot = await api.canvas.readDrawing({ threadId: props.threadId });
-      const canonicalized = canonicalizeAgentElements(snapshot.scene);
-      if (canonicalized.changed) {
-        snapshot = await api.canvas.saveDrawing({
-          threadId: props.threadId,
-          scene: canonicalized.scene,
-          expectedRevision: snapshot.revision,
-        });
-      }
-      applySnapshot(snapshot);
-    } catch (error) {
-      setSaveState("error");
-      toastManager.add({
-        type: "error",
-        title: "Unable to load drawing",
-        description: error instanceof Error ? error.message : "The drawing could not be loaded.",
+  const syncDrawing = useCallback(
+    (mode: DrawingSyncMode) => {
+      const foreground = mode === "foreground";
+      const live = mode === "live";
+      const settled = mode === "settled";
+      const sync = drawingIoChainRef.current.then(async () => {
+        const api = readNativeApi();
+        if (!api) return false;
+        const localSceneGeneration = localSceneGenerationRef.current;
+        const localSceneChanged = () =>
+          !foreground &&
+          (localSceneGeneration !== localSceneGenerationRef.current ||
+            pendingSceneRef.current !== null ||
+            conflictRef.current);
+        if (foreground) setSaveState("loading");
+        try {
+          let snapshot = await api.canvas.readDrawing({ threadId: props.threadId });
+          if (localSceneChanged()) return false;
+          if (live && snapshot.revision === revisionRef.current) return true;
+          const canonicalized = canonicalizeAgentElements(snapshot.scene);
+          if (canonicalized.changed) {
+            if (live || settled) {
+              applySnapshot(snapshot, canonicalized.scene);
+              return true;
+            }
+            snapshot = await api.canvas.saveDrawing({
+              threadId: props.threadId,
+              scene: canonicalized.scene,
+              expectedRevision: snapshot.revision,
+            });
+          }
+          applySnapshot(snapshot);
+          return true;
+        } catch (error) {
+          if (foreground) {
+            setSaveState("error");
+            toastManager.add({
+              type: "error",
+              title: "Unable to load drawing",
+              description:
+                error instanceof Error ? error.message : "The drawing could not be loaded.",
+            });
+          }
+          return false;
+        }
       });
-    }
-  }, [applySnapshot, props.threadId]);
+      drawingIoChainRef.current = sync.then(
+        () => undefined,
+        () => undefined,
+      );
+      return sync;
+    },
+    [applySnapshot, props.threadId],
+  );
+
+  const reloadDrawing = useCallback(
+    () => syncDrawing("foreground"),
+    [syncDrawing],
+  );
 
   useEffect(() => {
     void reloadDrawing();
@@ -226,7 +295,7 @@ export function CanvasWorkspaceView(props: {
       return;
     }
 
-    saveChainRef.current = saveChainRef.current.then(async () => {
+    drawingIoChainRef.current = drawingIoChainRef.current.then(async () => {
       const api = readNativeApi();
       const pendingScene = pendingSceneRef.current;
       const expectedRevision = revisionRef.current;
@@ -239,7 +308,7 @@ export function CanvasWorkspaceView(props: {
             ? pendingScene.scene
             : toCanvasScene(pendingScene.elements, pendingScene.appState, pendingScene.files);
         const sceneJson = JSON.stringify(scene);
-        if (sceneJson === persistedSceneJsonRef.current) {
+        if (sceneJson === renderedSceneJsonRef.current) {
           if (!pendingSceneRef.current) setSaveState("saved");
           return;
         }
@@ -250,11 +319,19 @@ export function CanvasWorkspaceView(props: {
           expectedRevision,
         });
         revisionRef.current = snapshot.revision;
-        persistedSceneJsonRef.current = JSON.stringify(snapshot.scene);
+        renderedSceneJsonRef.current = JSON.stringify(snapshot.scene);
         if (!pendingSceneRef.current) setSaveState("saved");
       } catch (error) {
         const message = error instanceof Error ? error.message : String(error);
-        const conflicted = /revision|conflict/i.test(message);
+        let conflicted = /revision|conflict/i.test(message);
+        if (!conflicted) {
+          try {
+            const current = await api.canvas.readDrawing({ threadId: props.threadId });
+            conflicted = current.revision !== expectedRevision;
+          } catch {
+            // Preserve the original save failure when the conflict probe also fails.
+          }
+        }
         pendingSceneRef.current ??= scene ? { kind: "serialized", scene } : pendingScene;
         conflictRef.current = conflicted;
         setSaveState(conflicted ? "conflict" : "error");
@@ -268,6 +345,7 @@ export function CanvasWorkspaceView(props: {
       if (applyingRemoteSceneRef.current || agentEditing || conflictRef.current) {
         return;
       }
+      localSceneGenerationRef.current += 1;
       pendingSceneRef.current = { kind: "excalidraw", elements, appState, files };
       saveTimerRef.current ??= setTimeout(flushPendingSave, AUTOSAVE_DELAY_MS);
     },
@@ -281,25 +359,96 @@ export function CanvasWorkspaceView(props: {
   }, [agentEditing, flushPendingSave]);
 
   useEffect(() => {
-    const currentState = thread?.latestTurn?.state ?? null;
-    if (
-      mutationTurnId &&
-      currentState !== "running" &&
-      lastReloadedMutationTurnIdRef.current !== mutationTurnId
-    ) {
-      lastReloadedMutationTurnIdRef.current = mutationTurnId;
+    const api = readNativeApi();
+    if (!api) return;
+    return api.canvas.onDrawingChanged((event) => {
+      if (
+        event.threadId !== props.threadId ||
+        event.revision === revisionRef.current ||
+        pendingSceneRef.current !== null ||
+        conflictRef.current
+      ) {
+        return;
+      }
+      latestNotifiedRevisionRef.current = event.revision;
+      if (liveSyncQueuedRef.current) return;
+      liveSyncQueuedRef.current = true;
       void (async () => {
-        flushPendingSave();
-        await saveChainRef.current;
-        if (!pendingSceneRef.current && !conflictRef.current) {
-          await reloadDrawing();
+        try {
+          let targetRevision: string | null;
+          do {
+            targetRevision = latestNotifiedRevisionRef.current;
+            if (!(await syncDrawing("live"))) return;
+          } while (
+            latestNotifiedRevisionRef.current !== targetRevision &&
+            latestNotifiedRevisionRef.current !== revisionRef.current
+          );
+        } finally {
+          liveSyncQueuedRef.current = false;
         }
       })();
+    });
+  }, [props.threadId, syncDrawing]);
+
+  useEffect(() => {
+    const latestTurn = thread?.latestTurn ?? null;
+    if (!latestTurn) return;
+    if (latestTurn.state === "running") {
+      if (agentEditing) {
+        pendingFinalReloadTurnIdRef.current = latestTurn.turnId;
+      }
+      return;
     }
-  }, [flushPendingSave, mutationTurnId, reloadDrawing, thread?.latestTurn?.state]);
+    const finalSyncTurnId =
+      pendingFinalReloadTurnIdRef.current === latestTurn.turnId
+        ? latestTurn.turnId
+        : mutationTurnId;
+    if (!finalSyncTurnId || lastSettledMutationTurnIdRef.current === finalSyncTurnId) return;
+    if (finalSyncInFlightTurnIdRef.current === finalSyncTurnId) return;
+    finalSyncAbortControllerRef.current?.abort();
+    finalSyncInFlightTurnIdRef.current = finalSyncTurnId;
+    const abortController = new AbortController();
+    finalSyncAbortControllerRef.current = abortController;
+    void (async () => {
+      try {
+        flushPendingSave();
+        await drawingIoChainRef.current;
+        for (const delayMs of FINAL_SYNC_RETRY_DELAYS_MS) {
+          if (
+            abortController.signal.aborted ||
+            conflictRef.current ||
+            !(await waitForFinalSyncRetry(delayMs, abortController.signal))
+          ) {
+            return;
+          }
+          if (pendingSceneRef.current) {
+            flushPendingSave();
+            await drawingIoChainRef.current;
+            if (pendingSceneRef.current || conflictRef.current) return;
+          }
+          if (await syncDrawing("settled")) {
+            if (abortController.signal.aborted) return;
+            lastSettledMutationTurnIdRef.current = finalSyncTurnId;
+            if (pendingFinalReloadTurnIdRef.current === finalSyncTurnId) {
+              pendingFinalReloadTurnIdRef.current = null;
+            }
+            return;
+          }
+        }
+      } finally {
+        if (finalSyncInFlightTurnIdRef.current === finalSyncTurnId) {
+          finalSyncInFlightTurnIdRef.current = null;
+        }
+        if (finalSyncAbortControllerRef.current === abortController) {
+          finalSyncAbortControllerRef.current = null;
+        }
+      }
+    })();
+  }, [agentEditing, flushPendingSave, mutationTurnId, syncDrawing, thread?.latestTurn]);
 
   useEffect(
     () => () => {
+      finalSyncAbortControllerRef.current?.abort();
       if (saveTimerRef.current) clearTimeout(saveTimerRef.current);
       flushPendingSave();
     },

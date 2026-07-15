@@ -36,6 +36,12 @@ export type CanvasDrawingSaveInput = typeof CanvasDrawingSaveInput.Type;
 export const CanvasDrawingDeleteInput = CanvasDrawingTarget;
 export type CanvasDrawingDeleteInput = typeof CanvasDrawingDeleteInput.Type;
 
+export const CanvasDrawingChangedEvent = Schema.Struct({
+  threadId: ThreadId,
+  revision: TrimmedNonEmptyString,
+});
+export type CanvasDrawingChangedEvent = typeof CanvasDrawingChangedEvent.Type;
+
 export interface CanvasDrawingSnapshot {
   readonly relativePath: string;
   readonly scene: CanvasScene;

@@ -1,6 +1,7 @@
 import { Schema, Struct } from "effect";
 import { NonNegativeInt, ProjectId, ThreadId, TrimmedNonEmptyString } from "./baseSchemas";
 import {
+  CanvasDrawingChangedEvent,
   CanvasDrawingCreateInput,
   CanvasDrawingDeleteInput,
   CanvasDrawingReadInput,
@@ -139,6 +140,7 @@ export const WS_METHODS = {
   canvasReadDrawing: "canvas.readDrawing",
   canvasSaveDrawing: "canvas.saveDrawing",
   canvasDeleteDrawing: "canvas.deleteDrawing",
+  subscribeCanvasDrawingChanges: "canvas.subscribeDrawingChanges",
   projectsRunDevServer: "projects.runDevServer",
   projectsStopDevServer: "projects.stopDevServer",
   projectsListDevServers: "projects.listDevServers",
@@ -254,6 +256,7 @@ export const WS_CHANNELS = {
   gitActionProgress: "git.actionProgress",
   terminalEvent: "terminal.event",
   projectDevServerEvent: "project.devServerEvent",
+  canvasDrawingChanged: "canvas.drawingChanged",
   serverWelcome: "server.welcome",
   serverMaintenanceUpdated: "server.maintenanceUpdated",
   serverConfigUpdated: "server.configUpdated",
@@ -306,6 +309,7 @@ const WebSocketRequestBody = Schema.Union([
   tagRequestBody(WS_METHODS.canvasReadDrawing, CanvasDrawingReadInput),
   tagRequestBody(WS_METHODS.canvasSaveDrawing, CanvasDrawingSaveInput),
   tagRequestBody(WS_METHODS.canvasDeleteDrawing, CanvasDrawingDeleteInput),
+  tagRequestBody(WS_METHODS.subscribeCanvasDrawingChanges, Schema.Struct({})),
   tagRequestBody(WS_METHODS.projectsRunDevServer, ProjectRunDevServerInput),
   tagRequestBody(WS_METHODS.projectsStopDevServer, ProjectStopDevServerInput),
   tagRequestBody(WS_METHODS.projectsListDevServers, Schema.Struct({})),
@@ -447,6 +451,7 @@ export interface WsPushPayloadByChannel {
   readonly [WS_CHANNELS.gitActionProgress]: typeof GitActionProgressEvent.Type;
   readonly [WS_CHANNELS.terminalEvent]: typeof TerminalEvent.Type;
   readonly [WS_CHANNELS.projectDevServerEvent]: typeof ProjectDevServerEvent.Type;
+  readonly [WS_CHANNELS.canvasDrawingChanged]: typeof CanvasDrawingChangedEvent.Type;
   readonly [ORCHESTRATION_WS_CHANNELS.domainEvent]: OrchestrationEvent;
   readonly [ORCHESTRATION_WS_CHANNELS.shellEvent]: OrchestrationShellStreamItem;
   readonly [ORCHESTRATION_WS_CHANNELS.threadEvent]: OrchestrationThreadStreamItem;
@@ -496,6 +501,10 @@ export const WsPushProjectDevServerEvent = makeWsPushSchema(
   WS_CHANNELS.projectDevServerEvent,
   ProjectDevServerEvent,
 );
+export const WsPushCanvasDrawingChanged = makeWsPushSchema(
+  WS_CHANNELS.canvasDrawingChanged,
+  CanvasDrawingChangedEvent,
+);
 export const WsPushOrchestrationDomainEvent = makeWsPushSchema(
   ORCHESTRATION_WS_CHANNELS.domainEvent,
   OrchestrationEvent,
@@ -519,6 +528,7 @@ export const WsPushChannelSchema = Schema.Literals([
   WS_CHANNELS.automationEvent,
   WS_CHANNELS.terminalEvent,
   WS_CHANNELS.projectDevServerEvent,
+  WS_CHANNELS.canvasDrawingChanged,
   ORCHESTRATION_WS_CHANNELS.domainEvent,
   ORCHESTRATION_WS_CHANNELS.shellEvent,
   ORCHESTRATION_WS_CHANNELS.threadEvent,
@@ -535,6 +545,7 @@ export const WsPush = Schema.Union([
   WsPushGitActionProgress,
   WsPushTerminalEvent,
   WsPushProjectDevServerEvent,
+  WsPushCanvasDrawingChanged,
   WsPushOrchestrationDomainEvent,
   WsPushOrchestrationShellEvent,
   WsPushOrchestrationThreadEvent,

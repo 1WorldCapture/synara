@@ -1,5 +1,6 @@
 import type {
   CanvasDrawingCreateInput,
+  CanvasDrawingChangedEvent,
   CanvasDrawingDeleteInput,
   CanvasDrawingDeleteResult,
   CanvasDrawingReadInput,
@@ -541,6 +542,7 @@ export interface NativeApi {
     readDrawing: (input: CanvasDrawingReadInput) => Promise<CanvasDrawingSnapshot>;
     saveDrawing: (input: CanvasDrawingSaveInput) => Promise<CanvasDrawingSnapshot>;
     deleteDrawing: (input: CanvasDrawingDeleteInput) => Promise<CanvasDrawingDeleteResult>;
+    onDrawingChanged: (callback: (event: CanvasDrawingChangedEvent) => void) => () => void;
   };
   filesystem: {
     browse: (input: FilesystemBrowseInput) => Promise<FilesystemBrowseResult>;
