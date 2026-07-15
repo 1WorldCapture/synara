@@ -76,6 +76,9 @@ import { buildModelSelection } from "./providerModelOptions";
 import { create } from "zustand";
 import { createJSONStorage, persist } from "zustand/middleware";
 import { createDebouncedStorage, createMemoryStorage } from "./lib/storage";
+import { COMPOSER_PROVIDER_KINDS } from "./lib/composerModelPreference";
+
+export { resolvePreferredComposerModelSelection } from "./lib/composerModelPreference";
 
 export const COMPOSER_DRAFT_STORAGE_KEY = "synara:composer-drafts:v1";
 const COMPOSER_DRAFT_STORAGE_VERSION = 5;
@@ -1880,43 +1883,6 @@ export function deriveEffectiveComposerModelState(input: {
     selectedModel,
     modelOptions,
   };
-}
-
-// Resolve the model we should persist for a draft-backed thread promotion.
-// This keeps terminal-first thread creation aligned with the composer precedence.
-export function resolvePreferredComposerModelSelection(input: {
-  draft:
-    | Pick<ComposerThreadDraftState, "modelSelectionByProvider" | "activeProvider">
-    | null
-    | undefined;
-  threadModelSelection: ModelSelection | null | undefined;
-  projectModelSelection: ModelSelection | null | undefined;
-  defaultProvider?: ProviderKind | null | undefined;
-}): ModelSelection {
-  const draftProviderWithSelection =
-    COMPOSER_PROVIDER_KINDS.find(
-      (provider) => input.draft?.modelSelectionByProvider?.[provider] !== undefined,
-    ) ?? null;
-  const preferredProvider =
-    input.draft?.activeProvider ??
-    draftProviderWithSelection ??
-    input.threadModelSelection?.provider ??
-    input.projectModelSelection?.provider ??
-    input.defaultProvider ??
-    "codex";
-
-  return (
-    input.draft?.modelSelectionByProvider?.[preferredProvider] ??
-    (input.threadModelSelection?.provider === preferredProvider
-      ? input.threadModelSelection
-      : null) ??
-    (input.projectModelSelection?.provider === preferredProvider
-      ? input.projectModelSelection
-      : null) ?? {
-      provider: preferredProvider === "pi" ? "codex" : preferredProvider,
-      model: getDefaultModel(preferredProvider === "pi" ? "codex" : preferredProvider),
-    }
-  );
 }
 
 function revokeObjectPreviewUrl(previewUrl: string): void {

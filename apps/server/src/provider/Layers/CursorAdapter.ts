@@ -43,6 +43,7 @@ import type * as EffectAcpSchema from "effect-acp/schema";
 import { ServerConfig, type ServerConfigShape } from "../../config.ts";
 import { appendFileAttachmentsPromptBlock } from "../attachmentProjection.ts";
 import { loadProviderPromptImageBlocks } from "../promptAttachments.ts";
+import { canvasAcpMcpServers } from "../providerCanvasRuntime.ts";
 import {
   ProviderAdapterProcessError,
   ProviderAdapterRequestError,
@@ -652,6 +653,7 @@ export function makeCursorAdapter(
             cursorSettings: effectiveCursorSettings,
             childProcessSpawner,
             cwd,
+            ...(input.canvas ? { mcpServers: canvasAcpMcpServers(input.canvas) } : {}),
             ...(resumeSessionId ? { resumeSessionId } : {}),
             clientInfo: { name: "Synara", version: "0.0.0" },
             ...acpNativeLoggers,

@@ -45,6 +45,7 @@ import {
   isGenericCanvasThreadTitle,
   isGenericChatThreadTitle,
 } from "@synara/shared/chatThreads";
+import { isCanvasProviderSupported } from "@synara/shared/canvasProvider";
 import {
   collectTailTurnIds,
   resolveTailUserMessageEditTarget,
@@ -928,9 +929,17 @@ const make = Effect.gen(function* () {
         .pipe(Effect.map((sessions) => sessions.find((session) => session.threadId === threadId)));
 
     const startProviderSession = (resumeCursor?: unknown) => {
+      if (thread.surface === "canvas" && !isCanvasProviderSupported(preferredProvider)) {
+        return Effect.fail(
+          new ProviderAdapterRequestError({
+            provider: preferredProvider,
+            method: "thread.turn.start",
+            detail: `${preferredProvider} does not support an isolated Canvas tool session.`,
+          }),
+        );
+      }
       const canvas =
         thread.surface === "canvas" &&
-        preferredProvider === "grok" &&
         effectiveCwd &&
         canvasDrawingRef
           ? (() => {
@@ -959,7 +968,7 @@ const make = Effect.gen(function* () {
           : undefined;
       const start = providerService.startSession(threadId, {
         ...providerSessionOptions,
-        ...(preferredProvider ? { provider: preferredProvider } : {}),
+        provider: preferredProvider,
         ...(resumeCursor !== undefined ? { resumeCursor } : {}),
         ...(canvas ? { canvas } : {}),
       });

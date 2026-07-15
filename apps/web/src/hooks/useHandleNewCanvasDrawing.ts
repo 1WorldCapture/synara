@@ -2,14 +2,22 @@
 // Purpose: Creates a durable Canvas thread and its server-resolved Excalidraw scene as one UI action.
 // Layer: Web orchestration hook
 
-import type { ProjectId, ThreadId } from "@synara/contracts";
+import { PROVIDER_DISPLAY_NAMES, type ProjectId, type ThreadId } from "@synara/contracts";
 import { buildCanvasThreadPlaceholderTitle } from "@synara/shared/chatThreads";
-import { getDefaultModel } from "@synara/shared/model";
+import { useQueryClient } from "@tanstack/react-query";
 import { useNavigate } from "@tanstack/react-router";
 import { useCallback } from "react";
 
+import {
+  getCustomBinaryPathForProvider,
+  useAppSettings,
+} from "../appSettings";
 import { toastManager } from "../components/ui/toast";
+import { useComposerDraftStore } from "../composerDraftStore";
+import { resolveCanvasModelSelection } from "../lib/canvasModelSelection";
+import { providerModelsQueryOptions } from "../lib/providerDiscoveryReactQuery";
 import { newCommandId, newThreadId } from "../lib/utils";
+import { mergeCursorModelVariantsWithBaseControls } from "../cursorModelVariants";
 import { readNativeApi } from "../nativeApi";
 import { useStore } from "../store";
 import { getThreadsFromState } from "../threadDerivation";
@@ -23,6 +31,8 @@ function waitForProjectionCatchUp(): Promise<void> {
 
 export function useHandleNewCanvasDrawing() {
   const navigate = useNavigate();
+  const queryClient = useQueryClient();
+  const { settings } = useAppSettings();
 
   const handleNewCanvasDrawing = useCallback(
     async (projectId: ProjectId): Promise<ThreadId | null> => {
@@ -47,6 +57,34 @@ export function useHandleNewCanvasDrawing() {
       let drawingCreated = false;
 
       try {
+        const composerState = useComposerDraftStore.getState();
+        const modelResolution = await resolveCanvasModelSelection({
+          stickyActiveProvider: composerState.stickyActiveProvider,
+          stickyModelSelectionByProvider: composerState.stickyModelSelectionByProvider,
+          projectModelSelection: project.defaultModelSelection,
+          defaultProvider: settings.defaultProvider,
+          listModels: async (provider) => {
+            const result = await queryClient.fetchQuery(
+              providerModelsQueryOptions({
+                provider,
+                binaryPath: getCustomBinaryPathForProvider(settings, provider) || null,
+                apiEndpoint: provider === "cursor" ? settings.cursorApiEndpoint || null : null,
+                agentDir: provider === "pi" ? settings.piAgentDir || null : null,
+                cwd: project.cwd,
+              }),
+            );
+            return provider === "cursor"
+              ? mergeCursorModelVariantsWithBaseControls(result.models)
+              : result.models;
+          },
+        });
+        if (modelResolution.fallbackFromProvider) {
+          toastManager.add({
+            type: "info",
+            title: "Canvas uses Codex for this drawing",
+            description: `${PROVIDER_DISPLAY_NAMES[modelResolution.fallbackFromProvider]} does not currently support an isolated Canvas tool session.`,
+          });
+        }
         await api.orchestration.dispatchCommand({
           type: "thread.create",
           commandId: newCommandId(),
@@ -54,7 +92,7 @@ export function useHandleNewCanvasDrawing() {
           projectId,
           surface: "canvas",
           title,
-          modelSelection: { provider: "grok", model: getDefaultModel("grok") },
+          modelSelection: modelResolution.modelSelection,
           runtimeMode: "full-access",
           interactionMode: "default",
           envMode: "local",
@@ -101,7 +139,7 @@ export function useHandleNewCanvasDrawing() {
         return null;
       }
     },
-    [navigate],
+    [navigate, queryClient, settings],
   );
 
   return { handleNewCanvasDrawing };

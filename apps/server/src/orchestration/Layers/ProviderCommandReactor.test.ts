@@ -1297,6 +1297,86 @@ describe("ProviderCommandReactor", () => {
     });
   });
 
+  it("provides the Canvas MCP runtime to non-Grok provider sessions", async () => {
+    const harness = await createHarness({
+      threadSurface: "canvas",
+      threadModelSelection: { provider: "claudeAgent", model: "claude-opus-4-8" },
+    });
+    const now = new Date().toISOString();
+
+    await Effect.runPromise(
+      harness.engine.dispatch({
+        type: "thread.turn.start",
+        commandId: CommandId.makeUnsafe("cmd-canvas-claude-turn-start"),
+        threadId: ThreadId.makeUnsafe("thread-1"),
+        message: {
+          messageId: asMessageId("canvas-claude-user"),
+          role: "user",
+          text: "Draw a release flow",
+          attachments: [],
+        },
+        runtimeMode: "full-access",
+        interactionMode: DEFAULT_PROVIDER_INTERACTION_MODE,
+        createdAt: now,
+      }),
+    );
+
+    await waitFor(() => harness.startSession.mock.calls.length === 1);
+    expect(harness.startSession.mock.calls[0]?.[1]).toMatchObject({
+      provider: "claudeAgent",
+      canvas: {
+        threadId: "thread-1",
+        bridgeUrl: expect.any(String),
+        bridgeToken: expect.any(String),
+        mcpCommand: expect.any(String),
+        mcpArgs: [expect.any(String)],
+      },
+    });
+  });
+
+  it("rejects Canvas providers that cannot host an isolated tool session", async () => {
+    const harness = await createHarness({
+      threadSurface: "canvas",
+      threadModelSelection: { provider: "pi", model: "pi-runtime-model" },
+    });
+    const now = new Date().toISOString();
+
+    await Effect.runPromise(
+      harness.engine.dispatch({
+        type: "thread.turn.start",
+        commandId: CommandId.makeUnsafe("cmd-canvas-pi-turn-start"),
+        threadId: ThreadId.makeUnsafe("thread-1"),
+        message: {
+          messageId: asMessageId("canvas-pi-user"),
+          role: "user",
+          text: "Draw a release flow",
+          attachments: [],
+        },
+        runtimeMode: "full-access",
+        interactionMode: DEFAULT_PROVIDER_INTERACTION_MODE,
+        createdAt: now,
+      }),
+    );
+
+    await waitFor(async () => {
+      const readModel = await Effect.runPromise(harness.engine.getReadModel());
+      return (
+        readModel.threads[0]?.activities.some(
+          (activity) => activity.kind === "provider.turn.start.failed",
+        ) ?? false
+      );
+    });
+    expect(harness.startSession).not.toHaveBeenCalled();
+    const readModel = await Effect.runPromise(harness.engine.getReadModel());
+    expect(
+      readModel.threads[0]?.activities.find(
+        (activity) => activity.kind === "provider.turn.start.failed",
+      ),
+    ).toMatchObject({
+      payload: { detail: expect.stringContaining("isolated Canvas tool session") },
+    });
+  });
+
   it("bootstraps sidechat context when the provider cannot fork natively", async () => {
     const harness = await createHarness();
     const now = new Date().toISOString();

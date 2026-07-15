@@ -14,11 +14,14 @@ import {
 } from "@synara/contracts";
 import { EMPTY_CANVAS_SCENE } from "@synara/shared/excalidrawScene";
 import { Schema } from "effect";
+import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
+import type { ReactElement } from "react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { page } from "vitest/browser";
 import { render } from "vitest-browser-react";
 
 import { resetWsNativeApiForTest } from "../wsNativeApi";
+import { useComposerDraftStore } from "../composerDraftStore";
 import { useStore } from "../store";
 import { CanvasWorkspaceView } from "./CanvasWorkspaceView";
 
@@ -88,6 +91,13 @@ function makeSnapshot(): CanvasDrawingSnapshot {
   };
 }
 
+function renderWithQueryClient(element: ReactElement) {
+  const queryClient = new QueryClient({
+    defaultOptions: { queries: { retry: false } },
+  });
+  return render(<QueryClientProvider client={queryClient}>{element}</QueryClientProvider>);
+}
+
 describe("CanvasWorkspaceView", () => {
   let previousNativeApi: NativeApi | undefined;
 
@@ -99,6 +109,10 @@ describe("CanvasWorkspaceView", () => {
     resetWsNativeApiForTest();
     localStorage.clear();
     document.body.innerHTML = "";
+    useComposerDraftStore.setState({
+      stickyActiveProvider: null,
+      stickyModelSelectionByProvider: {},
+    });
     useStore.setState({
       projects: [
         {
@@ -201,7 +215,7 @@ describe("CanvasWorkspaceView", () => {
 
   it("renders the canvas shell and toggles the persistent chat pane", async () => {
     const onExitCanvasView = vi.fn();
-    const screen = await render(
+    const screen = await renderWithQueryClient(
       <div style={{ width: "1440px", height: "900px" }}>
         <CanvasWorkspaceView
           threadId={THREAD_ID}
@@ -257,6 +271,55 @@ describe("CanvasWorkspaceView", () => {
     }
   });
 
+  it("creates a drawing with the Chat-preferred provider and its runtime default model", async () => {
+    const dispatchCommand = vi.fn(async () => ({ sequence: 2 }));
+    const listModels = vi.fn(async () => ({
+      models: [
+        { slug: "grok-4.5", name: "Grok 4.5" },
+        { slug: "grok-composer-2.5-fast", name: "Grok Composer 2.5 Fast" },
+      ],
+      source: "grok-cli",
+    }));
+    Object.defineProperty(window, "nativeApi", {
+      configurable: true,
+      value: {
+        ...window.nativeApi,
+        provider: { listModels },
+        orchestration: { dispatchCommand },
+      } as NativeApi,
+    });
+
+    const screen = await renderWithQueryClient(
+      <div style={{ width: "1440px", height: "900px" }}>
+        <CanvasWorkspaceView
+          threadId={THREAD_ID}
+          projectId={PROJECT_ID}
+          projectName="Canvas Project"
+          chatPanel={<div>Persistent Chat</div>}
+          onExitCanvasView={vi.fn()}
+        />
+      </div>,
+    );
+
+    try {
+      await page.getByRole("button", { name: "New AI drawing" }).click();
+      await vi.waitFor(() => expect(dispatchCommand).toHaveBeenCalled());
+      expect(listModels).toHaveBeenCalledWith(
+        expect.objectContaining({ provider: "grok", cwd: "/repo/canvas-project" }),
+      );
+      expect(dispatchCommand).toHaveBeenCalledWith(
+        expect.objectContaining({
+          type: "thread.create",
+          surface: "canvas",
+          projectId: PROJECT_ID,
+          modelSelection: { provider: "grok", model: "grok-4.5" },
+        }),
+      );
+    } finally {
+      await screen.unmount();
+    }
+  });
+
   it("renders ephemeral preview batches, yields camera control, and keeps one editor in full screen", async () => {
     const snapshot = makeSnapshot();
     const saveDrawing = vi.fn(async () => snapshot);
@@ -280,7 +343,7 @@ describe("CanvasWorkspaceView", () => {
       } as NativeApi,
     });
 
-    const screen = await render(
+    const screen = await renderWithQueryClient(
       <div style={{ width: "1440px", height: "900px" }}>
         <CanvasWorkspaceView
           threadId={THREAD_ID}
@@ -471,7 +534,7 @@ describe("CanvasWorkspaceView", () => {
       } as NativeApi,
     });
 
-    const screen = await render(
+    const screen = await renderWithQueryClient(
       <div style={{ width: "1440px", height: "900px" }}>
         <CanvasWorkspaceView
           threadId={THREAD_ID}
@@ -601,7 +664,7 @@ describe("CanvasWorkspaceView", () => {
       } as NativeApi,
     });
 
-    const screen = await render(
+    const screen = await renderWithQueryClient(
       <div style={{ width: "1440px", height: "900px" }}>
         <CanvasWorkspaceView
           threadId={THREAD_ID}
@@ -652,7 +715,7 @@ describe("CanvasWorkspaceView", () => {
       } as NativeApi,
     });
 
-    const screen = await render(
+    const screen = await renderWithQueryClient(
       <div style={{ width: "1440px", height: "900px" }}>
         <CanvasWorkspaceView
           threadId={THREAD_ID}
@@ -719,7 +782,7 @@ describe("CanvasWorkspaceView", () => {
       } as NativeApi,
     });
 
-    const screen = await render(
+    const screen = await renderWithQueryClient(
       <div style={{ width: "1440px", height: "900px" }}>
         <CanvasWorkspaceView
           threadId={THREAD_ID}

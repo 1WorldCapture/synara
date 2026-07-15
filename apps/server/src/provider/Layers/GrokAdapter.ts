@@ -48,6 +48,7 @@ import { ServerConfig, type ServerConfigShape } from "../../config.ts";
 import { buildProviderChildEnvironment } from "../../providerChildEnvironment.ts";
 import { appendFileAttachmentsPromptBlock } from "../attachmentProjection.ts";
 import { loadProviderPromptImageBlocks } from "../promptAttachments.ts";
+import { canvasAcpMcpServers } from "../providerCanvasRuntime.ts";
 import {
   ProviderAdapterRequestError,
   ProviderAdapterSessionNotFoundError,
@@ -1061,18 +1062,7 @@ export function makeGrokAdapter(
             cwd,
             ...(input.canvas
               ? {
-                  mcpServers: [
-                    {
-                      name: "synara-excalidraw",
-                      command: input.canvas.mcpCommand,
-                      args: input.canvas.mcpArgs,
-                      env: [
-                        { name: "SYNARA_CANVAS_BRIDGE_URL", value: input.canvas.bridgeUrl },
-                        { name: "SYNARA_CANVAS_BRIDGE_TOKEN", value: input.canvas.bridgeToken },
-                        { name: "SYNARA_CANVAS_THREAD_ID", value: input.canvas.threadId },
-                      ],
-                    },
-                  ],
+                  mcpServers: canvasAcpMcpServers(input.canvas),
                 }
               : {}),
             ...(resumeSessionId ? { resumeSessionId } : {}),

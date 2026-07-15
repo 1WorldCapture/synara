@@ -61,6 +61,10 @@ import {
   CodexJsonlFramer,
   CodexJsonlWriter,
 } from "./codexAppServerTransport.ts";
+import {
+  CANVAS_MCP_SERVER_NAME,
+  canvasMcpEnvironment,
+} from "./provider/providerCanvasRuntime.ts";
 
 const log = createLogger("codex");
 
@@ -221,6 +225,7 @@ export interface CodexAppServerStartSessionInput {
   readonly serviceTier?: string;
   readonly resumeCursor?: unknown;
   readonly providerOptions?: ProviderSessionStartInput["providerOptions"];
+  readonly canvas?: ProviderSessionStartInput["canvas"];
   readonly runtimeMode: RuntimeMode;
 }
 
@@ -880,6 +885,19 @@ export class CodexAppServerManager extends EventEmitter<CodexAppServerManagerEve
         model: normalizedModel ?? null,
         ...(input.serviceTier !== undefined ? { serviceTier: input.serviceTier } : {}),
         cwd: resolvedCwd,
+        ...(input.canvas
+          ? {
+              config: {
+                mcp_servers: {
+                  [CANVAS_MCP_SERVER_NAME]: {
+                    command: input.canvas.mcpCommand,
+                    args: [...input.canvas.mcpArgs],
+                    env: canvasMcpEnvironment(input.canvas),
+                  },
+                },
+              },
+            }
+          : {}),
         ...mapCodexRuntimeMode(input.runtimeMode ?? "full-access"),
       };
 

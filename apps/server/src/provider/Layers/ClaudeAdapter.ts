@@ -111,6 +111,10 @@ import {
   type ProviderAdapterError,
 } from "../Errors.ts";
 import { extractProposedPlanMarkdown, withProviderPlanModePrompt } from "../planMode.ts";
+import {
+  CANVAS_MCP_SERVER_NAME,
+  canvasStdioMcpServer,
+} from "../providerCanvasRuntime.ts";
 import { ClaudeAdapter, type ClaudeAdapterShape } from "../Services/ClaudeAdapter.ts";
 import { type EventNdjsonLogger, makeEventNdjsonLogger } from "./EventNdjsonLogger.ts";
 import {
@@ -3778,6 +3782,13 @@ function makeClaudeAdapter(options?: ClaudeAdapterLiveOptions) {
             append: EMBEDDED_CLAUDE_SYSTEM_PROMPT_APPEND,
           },
           ...(Object.keys(claudeSubagents).length > 0 ? { agents: claudeSubagents } : {}),
+          ...(input.canvas
+            ? {
+                mcpServers: {
+                  [CANVAS_MCP_SERVER_NAME]: canvasStdioMcpServer(input.canvas),
+                },
+              }
+            : {}),
           // Keep the runtime value explicit so Opus 4.7 can pass xhigh through to the SDK.
           ...(effectiveEffort
             ? { effort: effectiveEffort as "low" | "medium" | "high" | "xhigh" | "max" }

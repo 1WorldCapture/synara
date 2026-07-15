@@ -199,6 +199,10 @@
     "./excalidrawScene": {
       "types": "./src/excalidrawScene.ts",
       "import": "./src/excalidrawScene.ts"
+    },
+    "./canvasProvider": {
+      "types": "./src/canvasProvider.ts",
+      "import": "./src/canvasProvider.ts"
     }
   },
   "scripts": {
