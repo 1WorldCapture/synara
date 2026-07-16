@@ -430,6 +430,57 @@ describe("wsNativeApi", () => {
     });
   });
 
+  it("replays an active Canvas preview to listeners mounted after the stream starts", async () => {
+    const { createWsNativeApi } = await import("./wsNativeApi");
+    const api = createWsNativeApi();
+    const revealListener = vi.fn();
+    api.canvas.onAgentPreview(revealListener);
+
+    const threadId = ThreadId.makeUnsafe("drawing-late-listener");
+    const start = {
+      threadId,
+      streamId: "stream-late-listener",
+      sequence: 0,
+      phase: "start" as const,
+      baseRevision: "revision-1",
+      operations: [],
+    };
+    const firstPartial = {
+      ...start,
+      sequence: 1,
+      phase: "partial" as const,
+      operations: [{ id: "box-1", type: "rectangle" }],
+    };
+    emitPush(WS_CHANNELS.canvasAgentPreview, start);
+    emitPush(WS_CHANNELS.canvasAgentPreview, firstPartial);
+
+    const dockListener = vi.fn();
+    api.canvas.onAgentPreview(dockListener);
+
+    expect(dockListener.mock.calls.map(([event]) => event)).toEqual([start, firstPartial]);
+    expect(
+      subscribeMock.mock.calls.filter(([channel]) => channel === WS_CHANNELS.canvasAgentPreview),
+    ).toHaveLength(1);
+
+    const secondPartial = {
+      ...start,
+      sequence: 2,
+      phase: "partial" as const,
+      operations: [{ id: "label-1", type: "text" }],
+    };
+    emitPush(WS_CHANNELS.canvasAgentPreview, secondPartial);
+    expect(dockListener).toHaveBeenLastCalledWith(secondPartial);
+
+    emitPush(WS_CHANNELS.canvasAgentPreview, {
+      ...start,
+      sequence: 3,
+      phase: "complete",
+    });
+    const afterCompletionListener = vi.fn();
+    api.canvas.onAgentPreview(afterCompletionListener);
+    expect(afterCompletionListener).not.toHaveBeenCalled();
+  });
+
   it("forwards automation requests and events", async () => {
     requestMock.mockResolvedValue({ definitions: [], runs: [] });
     const { createWsNativeApi } = await import("./wsNativeApi");

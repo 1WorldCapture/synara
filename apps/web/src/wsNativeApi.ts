@@ -41,6 +41,7 @@ import {
   type AutomationStreamEvent,
 } from "@synara/contracts";
 import { VOICE_TRANSCRIPTION_UPLOAD_ROUTE_PATH } from "@synara/shared/binaryTransfer";
+import { MAX_CANVAS_SCENE_BYTES } from "@synara/shared/excalidrawScene";
 
 import { showConfirmDialogFallback } from "./confirmDialogFallback";
 import { logCanvasDiagnostic } from "./lib/canvasDiagnostics";
@@ -71,6 +72,9 @@ function createListenerRegistry<T>() {
           // A listener must not prevent delivery to the remaining subscribers.
         }
       }
+    },
+    forEach(visitor: (listener: (payload: T) => void) => void) {
+      for (const listener of listeners) visitor(listener);
     },
     clear() {
       listeners.clear();
@@ -122,6 +126,16 @@ const terminalEventListeners = createListenerRegistry<TerminalEvent>();
 const projectDevServerEventListeners = createListenerRegistry<ProjectDevServerEvent>();
 const canvasDrawingChangedListeners = createListenerRegistry<CanvasDrawingChangedEvent>();
 const canvasAgentPreviewListeners = createListenerRegistry<CanvasAgentPreviewEvent>();
+const canvasAgentPreviewReplayByThread = new Map<
+  ThreadId,
+  {
+    readonly streamId: string;
+    readonly sequence: number;
+    readonly expiresAt: number;
+    readonly events: CanvasAgentPreviewEvent[] | null;
+    readonly byteLength: number;
+  }
+>();
 let unsubscribeCanvasAgentPreviewTransport: (() => void) | null = null;
 const automationEventListeners = createListenerRegistry<AutomationStreamEvent>();
 const orchestrationDomainEventListeners = createListenerRegistry<OrchestrationEvent>();
@@ -129,6 +143,104 @@ const orchestrationShellEventListeners = createListenerRegistry<OrchestrationShe
 const orchestrationThreadEventListeners = createListenerRegistry<OrchestrationThreadStreamItem>();
 const fallbackBrowserStateListeners = createListenerRegistry<ThreadBrowserState>();
 const fallbackBrowserStates = new Map<ThreadId, ThreadBrowserState>();
+
+const CANVAS_AGENT_PREVIEW_TTL_MS = 2 * 60 * 1_000;
+const MAX_ACTIVE_CANVAS_AGENT_PREVIEWS = 32;
+const MAX_CANVAS_AGENT_PREVIEW_STREAM_BYTES = MAX_CANVAS_SCENE_BYTES + 64 * 1024;
+const MAX_CANVAS_AGENT_PREVIEW_REPLAY_BYTES = 32 * 1024 * 1024;
+const canvasAgentPreviewEncoder = new TextEncoder();
+
+function pruneCanvasAgentPreviewReplay(now = Date.now()): void {
+  for (const [threadId, state] of canvasAgentPreviewReplayByThread) {
+    if (state.expiresAt <= now) canvasAgentPreviewReplayByThread.delete(threadId);
+  }
+}
+
+function trimCanvasAgentPreviewReplay(): void {
+  while (canvasAgentPreviewReplayByThread.size > MAX_ACTIVE_CANVAS_AGENT_PREVIEWS) {
+    const oldestThreadId = canvasAgentPreviewReplayByThread.keys().next().value;
+    if (oldestThreadId === undefined) break;
+    canvasAgentPreviewReplayByThread.delete(oldestThreadId);
+  }
+  let totalBytes = [...canvasAgentPreviewReplayByThread.values()].reduce(
+    (total, state) => total + state.byteLength,
+    0,
+  );
+  if (totalBytes <= MAX_CANVAS_AGENT_PREVIEW_REPLAY_BYTES) return;
+  for (const [threadId, state] of canvasAgentPreviewReplayByThread) {
+    if (state.events === null) continue;
+    totalBytes -= state.byteLength;
+    canvasAgentPreviewReplayByThread.set(threadId, {
+      ...state,
+      events: null,
+      byteLength: 0,
+    });
+    if (totalBytes <= MAX_CANVAS_AGENT_PREVIEW_REPLAY_BYTES) break;
+  }
+}
+
+function recordCanvasAgentPreviewForReplay(event: CanvasAgentPreviewEvent): boolean {
+  pruneCanvasAgentPreviewReplay();
+  const current = canvasAgentPreviewReplayByThread.get(event.threadId);
+  const terminal = event.phase === "complete" || event.phase === "cancelled";
+  if (terminal) {
+    canvasAgentPreviewReplayByThread.delete(event.threadId);
+    return true;
+  }
+  if (current?.streamId === event.streamId && event.sequence <= current.sequence) {
+    return false;
+  }
+
+  const orderedContinuation =
+    current?.streamId === event.streamId && event.sequence === current.sequence + 1;
+  const newStream = event.phase === "start" && event.sequence === 0;
+  const eventBytes = canvasAgentPreviewEncoder.encode(JSON.stringify(event)).byteLength;
+  const nextByteLength = orderedContinuation ? current.byteLength + eventBytes : eventBytes;
+  const replayable =
+    (newStream || (orderedContinuation && current.events !== null)) &&
+    nextByteLength <= MAX_CANVAS_AGENT_PREVIEW_STREAM_BYTES;
+  let events: CanvasAgentPreviewEvent[] | null = null;
+  if (replayable) {
+    events = orderedContinuation && current.events ? current.events : [];
+    events.push(event);
+  }
+
+  canvasAgentPreviewReplayByThread.delete(event.threadId);
+  canvasAgentPreviewReplayByThread.set(event.threadId, {
+    streamId: event.streamId,
+    sequence: event.sequence,
+    expiresAt: Date.now() + CANVAS_AGENT_PREVIEW_TTL_MS,
+    events,
+    byteLength: replayable ? nextByteLength : 0,
+  });
+  trimCanvasAgentPreviewReplay();
+  return true;
+}
+
+function dispatchCanvasAgentPreview(
+  listener: (event: CanvasAgentPreviewEvent) => void,
+  event: CanvasAgentPreviewEvent,
+): void {
+  try {
+    listener(event);
+  } catch (error) {
+    logCanvasDiagnostic("native-api.listener-failed", {
+      threadId: event.threadId,
+      streamId: event.streamId,
+      sequence: event.sequence,
+      error: error instanceof Error ? error.message : String(error),
+    });
+  }
+}
+
+function replayCanvasAgentPreview(listener: (event: CanvasAgentPreviewEvent) => void): number {
+  pruneCanvasAgentPreviewReplay();
+  const events = [...canvasAgentPreviewReplayByThread.values()].flatMap(
+    (state) => state.events ?? [],
+  );
+  for (const event of events) dispatchCanvasAgentPreview(listener, event);
+  return events.length;
+}
 
 function ensureCanvasAgentPreviewSubscription(transport: WsTransport): void {
   if (unsubscribeCanvasAgentPreviewTransport) return;
@@ -138,6 +250,7 @@ function ensureCanvasAgentPreviewSubscription(transport: WsTransport): void {
   unsubscribeCanvasAgentPreviewTransport = transport.subscribe(
     WS_CHANNELS.canvasAgentPreview,
     (message) => {
+      if (!recordCanvasAgentPreviewForReplay(message.data)) return;
       logCanvasDiagnostic("native-api.event-dispatching", {
         threadId: message.data.threadId,
         streamId: message.data.streamId,
@@ -147,7 +260,9 @@ function ensureCanvasAgentPreviewSubscription(transport: WsTransport): void {
         operationCount: message.data.operations.length,
         listenerCount: canvasAgentPreviewListeners.size,
       });
-      canvasAgentPreviewListeners.emit(message.data);
+      canvasAgentPreviewListeners.forEach((listener) =>
+        dispatchCanvasAgentPreview(listener, message.data),
+      );
     },
   );
 }
@@ -160,6 +275,7 @@ function releaseCanvasAgentPreviewSubscription(): void {
   }
   unsubscribeCanvasAgentPreviewTransport?.();
   unsubscribeCanvasAgentPreviewTransport = null;
+  canvasAgentPreviewReplayByThread.clear();
 }
 
 function clearWsNativeApiListeners(): void {
@@ -509,11 +625,19 @@ export function createWsNativeApi(): NativeApi {
       saveDrawing: (input) => transport.request(WS_METHODS.canvasSaveDrawing, input),
       onDrawingChanged: canvasDrawingChangedListeners.subscribe,
       onAgentPreview: (callback) => {
+        const transportAlreadySubscribed = unsubscribeCanvasAgentPreviewTransport !== null;
         const unsubscribe = canvasAgentPreviewListeners.subscribe(callback);
         logCanvasDiagnostic("native-api.listener-attached", {
           listenerCount: canvasAgentPreviewListeners.size,
         });
         ensureCanvasAgentPreviewSubscription(transport);
+        if (transportAlreadySubscribed) {
+          const replayEventCount = replayCanvasAgentPreview(callback);
+          logCanvasDiagnostic("native-api.listener-replayed", {
+            listenerCount: canvasAgentPreviewListeners.size,
+            replayEventCount,
+          });
+        }
         return () => {
           unsubscribe();
           logCanvasDiagnostic("native-api.listener-detached", {
