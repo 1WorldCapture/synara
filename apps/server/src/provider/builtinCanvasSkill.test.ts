@@ -1,4 +1,5 @@
 import {
+  copyFile,
   mkdtemp,
   mkdir,
   readFile,
@@ -13,12 +14,15 @@ import path from "node:path";
 
 import { afterEach, describe, expect, it } from "vitest";
 
+import { CANVAS_SKILL_NAME } from "@synara/shared/canvasAgentContract";
+
 import {
   builtinCanvasSkillPath,
   materializeBuiltinCanvasSkill,
   resolveBuiltinCanvasSkillSourcePath,
   type BuiltinCanvasSkillIo,
 } from "./builtinCanvasSkill";
+import { readSkillDescriptor } from "./skillsCatalog";
 
 const initialSkill = `---
 name: canvas
@@ -142,5 +146,37 @@ describe("built-in Canvas Skill", () => {
     expect(
       resolveBuiltinCanvasSkillSourcePath({ runtime: "node", moduleDir: serverDist }),
     ).toBe(expected);
+  });
+
+  it("materializes and discovers the Skill from an isolated packaged server layout", async () => {
+    const serverDist = await makeTempDir("synara-packaged-server-dist-");
+    const packagedSource = path.join(
+      serverDist,
+      "excalidraw-mcp/skills/canvas/SKILL.md",
+    );
+    await mkdir(path.dirname(packagedSource), { recursive: true });
+    await copyFile(resolveBuiltinCanvasSkillSourcePath({ runtime: "bun" }), packagedSource);
+
+    const isolatedBaseDir = await makeTempDir("synara-packaged-home-");
+    const resolvedSource = resolveBuiltinCanvasSkillSourcePath({
+      runtime: "node",
+      moduleDir: serverDist,
+    });
+    const managedPath = await materializeBuiltinCanvasSkill({
+      baseDir: isolatedBaseDir,
+      sourcePath: resolvedSource,
+    });
+
+    expect(managedPath).toBe(builtinCanvasSkillPath(isolatedBaseDir));
+    const descriptor = await readSkillDescriptor({
+      skillPath: managedPath!,
+      scope: "synara-builtin",
+    });
+    expect(descriptor).toMatchObject({
+      name: CANVAS_SKILL_NAME,
+      path: managedPath,
+      scope: "synara-builtin",
+    });
+    expect(await readFile(managedPath!, "utf8")).toBe(await readFile(packagedSource, "utf8"));
   });
 });

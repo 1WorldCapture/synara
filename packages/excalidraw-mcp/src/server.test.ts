@@ -1,10 +1,14 @@
 import { createServer as createHttpServer, type Server } from "node:http";
 import { once } from "node:events";
+import { readFile } from "node:fs/promises";
+import path from "node:path";
 
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { InMemoryTransport } from "@modelcontextprotocol/sdk/inMemory.js";
 import {
   CANVAS_MCP_DISPLAY_NAME,
+  CANVAS_MCP_NAMESPACE,
+  CANVAS_SKILL_NAME,
   CANVAS_TOOL_NAMES,
 } from "@synara/shared/canvasAgentContract";
 import { afterEach, describe, expect, it } from "vitest";
@@ -139,7 +143,24 @@ describe("Synara Canvas MCP server", () => {
     });
     expect(bridge.readSaveAttemptCount()).toBe(0);
 
-    const advertisedText = [instructions, ...tools.map((tool) => tool.description)].join("\n");
+    const canonicalSkill = await readFile(
+      path.resolve(import.meta.dirname, "../skills/canvas/SKILL.md"),
+      "utf8",
+    );
+    expect(canonicalSkill).toMatch(
+      new RegExp(`^---\\s*\\nname:\\s*${CANVAS_SKILL_NAME}\\s*$`, "m"),
+    );
+    const workflowOffsets = CANVAS_TOOL_NAMES.map((name) => canonicalSkill.indexOf(`\`${name}\``));
+    expect(workflowOffsets.every((offset) => offset >= 0)).toBe(true);
+    expect(workflowOffsets).toEqual([...workflowOffsets].sort((left, right) => left - right));
+
+    const advertisedText = [
+      CANVAS_MCP_NAMESPACE,
+      CANVAS_MCP_DISPLAY_NAME,
+      instructions,
+      ...tools.flatMap((tool) => [tool.name, tool.description]),
+      canonicalSkill,
+    ].join("\n");
     for (const legacyName of LEGACY_TOOL_NAMES) {
       expect(advertisedText).not.toContain(legacyName);
       const result = await connection.client.callTool({ name: legacyName, arguments: {} });
@@ -148,6 +169,7 @@ describe("Synara Canvas MCP server", () => {
         expect.objectContaining({ type: "text", text: expect.stringContaining("not found") }),
       ]);
     }
+    expect(advertisedText).not.toContain("synara-excalidraw");
     expect(bridge.readSaveAttemptCount()).toBe(0);
 
     await connection.close();

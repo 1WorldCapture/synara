@@ -16,6 +16,17 @@ stores are intentionally removed. This fork exposes only the incremental
 Drawing through a short-lived, thread-scoped Synara loopback capability and
 never receives a filesystem path.
 
+Synara packages the canonical `skills/canvas/SKILL.md` beside the MCP entry and
+atomically materializes it into Synara's managed `builtin-skills/canvas` root at
+runtime. The package name, `synara-excalidraw-mcp` executable, bridge environment
+variables, and persisted Drawing format remain unchanged.
+
+This Agent-facing namespace and tool migration is intentionally breaking for
+development sessions: restart Synara after upgrading so backend and provider
+processes advertise only the `canvas` namespace and five-tool lifecycle. Desktop
+upgrades already restart those processes. Existing Drawing files require no data
+migration.
+
 The upstream iframe converted shorthand elements with
 `convertToExcalidrawElements`. Synara performs that same conversion in the
 lazy-loaded Canvas workspace before applying and revision-saving the canonical

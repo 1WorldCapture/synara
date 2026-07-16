@@ -14,6 +14,7 @@ import desktopPackageJson from "../apps/desktop/package.json" with { type: "json
 import serverPackageJson from "../apps/server/package.json" with { type: "json" };
 
 import { BRAND_ASSET_PATHS } from "./lib/brand-assets.ts";
+import { findMissingCanvasMcpDistAssets } from "./lib/canvas-mcp-dist-assets.ts";
 import {
   createDesktopPlatformBuildConfig,
   MAC_APPSNAP_HELPER_STAGE_PATH,
@@ -890,6 +891,14 @@ const buildDesktopArtifact = Effect.fn("buildDesktopArtifact")(function* (
     });
   }
 
+  const canvasMcpServerDist = path.join(distDirs.serverDist, "excalidraw-mcp");
+  const missingCanvasMcpAssets = findMissingCanvasMcpDistAssets(canvasMcpServerDist);
+  if (missingCanvasMcpAssets.length > 0) {
+    return yield* new BuildScriptError({
+      message: `Missing Canvas MCP server assets: ${missingCanvasMcpAssets.join(", ")}. Run 'bun run build:desktop' first.`,
+    });
+  }
+
   yield* validateBundledClientAssets(path.dirname(bundledClientEntry));
 
   yield* fs.makeDirectory(path.join(stageAppDir, "apps/desktop"), { recursive: true });
@@ -899,6 +908,14 @@ const buildDesktopArtifact = Effect.fn("buildDesktopArtifact")(function* (
   yield* fs.copy(distDirs.desktopDist, path.join(stageAppDir, "apps/desktop/dist-electron"));
   yield* fs.copy(distDirs.desktopResources, stageResourcesDir);
   yield* fs.copy(distDirs.serverDist, path.join(stageAppDir, "apps/server/dist"));
+
+  const stagedCanvasMcpDist = path.join(stageAppDir, "apps/server/dist/excalidraw-mcp");
+  const missingStagedCanvasMcpAssets = findMissingCanvasMcpDistAssets(stagedCanvasMcpDist);
+  if (missingStagedCanvasMcpAssets.length > 0) {
+    return yield* new BuildScriptError({
+      message: `Desktop stage is missing Canvas MCP assets after server copy: ${missingStagedCanvasMcpAssets.join(", ")}.`,
+    });
+  }
 
   yield* assertPlatformBuildResources(options.platform, stageResourcesDir, options.verbose);
 

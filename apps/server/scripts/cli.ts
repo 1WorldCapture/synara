@@ -10,6 +10,10 @@ import {
   DEVELOPMENT_ICON_OVERRIDES,
   PUBLISH_ICON_OVERRIDES,
 } from "../../../scripts/lib/brand-assets.ts";
+import {
+  CANVAS_MCP_REQUIRED_DIST_ASSETS,
+  findMissingCanvasMcpDistAssets,
+} from "../../../scripts/lib/canvas-mcp-dist-assets.ts";
 import { resolveCatalogDependencies } from "../../../scripts/lib/resolve-catalog.ts";
 import rootPackageJson from "../../../package.json" with { type: "json" };
 import serverPackageJson from "../package.json" with { type: "json" };
@@ -143,10 +147,12 @@ const buildCmd = Command.make(
       );
 
       const canvasMcpDist = path.join(repoRoot, "packages/excalidraw-mcp/dist");
-      const canvasMcpEntry = path.join(canvasMcpDist, "main.mjs");
-      if (!(yield* fs.exists(canvasMcpEntry))) {
+      const missingCanvasMcpAssets = findMissingCanvasMcpDistAssets(canvasMcpDist);
+      if (missingCanvasMcpAssets.length > 0) {
         return yield* new CliError({
-          message: `Missing Canvas MCP build at ${canvasMcpEntry}. Build workspace dependencies first.`,
+          message: `Missing Canvas MCP build assets at ${missingCanvasMcpAssets
+            .map((relativePath) => path.join(canvasMcpDist, relativePath))
+            .join(", ")}. Build workspace dependencies first.`,
         });
       }
       yield* fs.copy(canvasMcpDist, path.join(serverDir, "dist/excalidraw-mcp"));
@@ -191,7 +197,9 @@ const publishCmd = Command.make(
         "dist/index.mjs",
         "dist/restoreMigrationBackup.mjs",
         "dist/client/index.html",
-        "dist/excalidraw-mcp/main.mjs",
+        ...CANVAS_MCP_REQUIRED_DIST_ASSETS.map(
+          (relativePath) => `dist/excalidraw-mcp/${relativePath}`,
+        ),
       ]) {
         const abs = path.join(serverDir, relPath);
         if (!(yield* fs.exists(abs))) {
