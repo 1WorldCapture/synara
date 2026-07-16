@@ -65,6 +65,10 @@ import {
   CANVAS_MCP_SERVER_NAME,
   canvasMcpEnvironment,
 } from "./provider/providerCanvasRuntime.ts";
+import {
+  builtinSkillsRoot,
+  materializeBuiltinCanvasSkill,
+} from "./provider/builtinCanvasSkill.ts";
 
 const log = createLogger("codex");
 
@@ -753,31 +757,51 @@ export class CodexAppServerManager extends EventEmitter<CodexAppServerManagerEve
 
   private runPromise: (effect: Effect.Effect<unknown, never>) => Promise<unknown>;
   private readonly synaraSkillsDir: string | undefined;
+  private readonly synaraBaseDir: string | undefined;
   private readonly teardownProcessTree: typeof teardownProviderProcessTree;
   constructor(
     services?: ServiceMap.ServiceMap<never>,
     options?: {
       readonly synaraSkillsDir?: string;
+      readonly synaraBaseDir?: string;
       readonly teardownProcessTree?: typeof teardownProviderProcessTree;
     },
   ) {
     super();
     this.runPromise = services ? Effect.runPromiseWith(services) : Effect.runPromise;
     this.synaraSkillsDir = options?.synaraSkillsDir;
+    this.synaraBaseDir = options?.synaraBaseDir;
     this.teardownProcessTree = options?.teardownProcessTree ?? teardownProviderProcessTree;
   }
 
-  // Registers `~/.synara/skills` as a codex skill root so portable skills are
-  // first-class: skills/list returns them and turn/start `skill` items inject
-  // their instructions. Verified live: skill items with paths outside known
-  // roots are silently ignored by codex app-server, so this call is required.
-  private async registerSynaraSkillsRoot(context: CodexSessionContext): Promise<void> {
-    if (!this.synaraSkillsDir) {
+  // Registers personal and managed Synara roots so skills/list returns them and
+  // turn/start `skill` items inject their instructions. Verified live: skill
+  // items outside known roots are silently ignored by codex app-server.
+  private async registerSynaraSkillsRoots(context: CodexSessionContext): Promise<void> {
+    const roots: string[] = [];
+    if (this.synaraSkillsDir) {
+      roots.push(this.synaraSkillsDir);
+    }
+    if (this.synaraBaseDir) {
+      const managedPath = await materializeBuiltinCanvasSkill({ baseDir: this.synaraBaseDir });
+      if (managedPath) {
+        roots.push(builtinSkillsRoot(this.synaraBaseDir));
+      } else {
+        log.warn("managed Canvas Skill materialization failed; omitting Codex built-in root", {
+          baseDir: this.synaraBaseDir,
+        });
+      }
+    }
+    const extraRoots = roots.filter(
+      (root, index, all) =>
+        all.findIndex((candidate) => path.resolve(candidate) === path.resolve(root)) === index,
+    );
+    if (extraRoots.length === 0) {
       return;
     }
     try {
       await this.sendRequest(context, "skills/extraRoots/set", {
-        extraRoots: [this.synaraSkillsDir],
+        extraRoots,
       });
     } catch (error) {
       // Older codex builds (< extra-roots support) keep working; Synara-only
@@ -857,7 +881,7 @@ export class CodexAppServerManager extends EventEmitter<CodexAppServerManagerEve
       await this.sendRequest(context, "initialize", buildCodexInitializeParams());
 
       await this.writeMessage(context, { method: "initialized" });
-      await this.registerSynaraSkillsRoot(context);
+      await this.registerSynaraSkillsRoots(context);
       try {
         const modelListResponse = await this.sendRequest(context, "model/list", {});
         log.info("model/list response", { modelListResponse });
@@ -1493,7 +1517,7 @@ export class CodexAppServerManager extends EventEmitter<CodexAppServerManagerEve
 
       await this.sendRequest(context, "initialize", buildCodexInitializeParams());
       await this.writeMessage(context, { method: "initialized" });
-      await this.registerSynaraSkillsRoot(context);
+      await this.registerSynaraSkillsRoots(context);
       try {
         const accountReadResponse = await this.sendRequest(context, "account/read", {});
         context.account = readCodexAccountSnapshot(accountReadResponse);
@@ -2125,7 +2149,7 @@ export class CodexAppServerManager extends EventEmitter<CodexAppServerManagerEve
     try {
       await this.sendRequest(context, "initialize", buildCodexInitializeParams());
       await this.writeMessage(context, { method: "initialized" });
-      await this.registerSynaraSkillsRoot(context);
+      await this.registerSynaraSkillsRoots(context);
       try {
         const accountReadResponse = await this.sendRequest(context, "account/read", {});
         context.account = readCodexAccountSnapshot(accountReadResponse);

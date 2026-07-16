@@ -5,7 +5,11 @@
 import type { ProviderSkillDescriptor } from "@synara/contracts";
 import { describe, expect, it } from "vitest";
 
-import { buildSettingsSkillGroups, buildSettingsSkillSections } from "./skillsSettingsModel";
+import {
+  buildSettingsSkillGroups,
+  buildSettingsSkillSections,
+  skillOriginInfo,
+} from "./skillsSettingsModel";
 
 function skill(partial: Partial<ProviderSkillDescriptor>): ProviderSkillDescriptor {
   return {
@@ -17,6 +21,35 @@ function skill(partial: Partial<ProviderSkillDescriptor>): ProviderSkillDescript
 }
 
 describe("buildSettingsSkillGroups", () => {
+  it("labels the managed Canvas origin as built into Synara", () => {
+    expect(skillOriginInfo("synara-builtin")).toEqual({
+      label: "Built into Synara",
+      provider: null,
+    });
+  });
+
+  it("keeps managed Canvas primary while showing colliding provider sources", () => {
+    const groups = buildSettingsSkillGroups([
+      skill({
+        name: "canvas",
+        path: "/tmp/builtin-skills/canvas/SKILL.md",
+        scope: "synara-builtin",
+      }),
+      skill({
+        name: "Canvas",
+        path: "/Users/test/.codex/skills/canvas/SKILL.md",
+        scope: "codex",
+      }),
+    ]);
+
+    expect(groups[0]?.primarySkill.scope).toBe("synara-builtin");
+    expect(groups[0]?.section).toBe("shared");
+    expect(groups[0]?.sources.map((source) => source.origin)).toEqual([
+      "synara-builtin",
+      "codex",
+    ]);
+  });
+
   it("renders duplicate provider copies as one shared skill group", () => {
     const groups = buildSettingsSkillGroups([
       skill({

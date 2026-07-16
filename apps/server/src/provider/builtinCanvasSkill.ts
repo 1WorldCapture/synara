@@ -3,13 +3,17 @@
 // Layer: Server provider discovery helper
 
 import { randomUUID } from "node:crypto";
+import { existsSync } from "node:fs";
 import * as fs from "node:fs/promises";
 import { createRequire } from "node:module";
 import path from "node:path";
 
-import { CANVAS_SKILL_NAME } from "@synara/shared/canvasAgentContract";
+import {
+  CANVAS_SKILL_NAME,
+  SYNARA_BUILTIN_SKILL_SCOPE,
+} from "@synara/shared/canvasAgentContract";
 
-export const SYNARA_BUILTIN_SKILL_SCOPE = "synara-builtin" as const;
+export { SYNARA_BUILTIN_SKILL_SCOPE };
 export const BUILTIN_SKILLS_DIR_NAME = "builtin-skills" as const;
 
 const CANVAS_SKILL_RELATIVE_PATH = path.join(CANVAS_SKILL_NAME, "SKILL.md");
@@ -56,14 +60,19 @@ export function resolveBuiltinCanvasSkillSourcePath(input: {
   readonly moduleDir?: string;
   readonly packageRoot?: string;
 } = {}): string {
-  const runtime = input.runtime ?? (process.versions.bun ? "bun" : "node");
-  if (runtime === "node") {
-    return path.join(
-      input.moduleDir ?? import.meta.dirname,
-      "excalidraw-mcp",
-      "skills",
-      CANVAS_SKILL_RELATIVE_PATH,
-    );
+  const moduleDir = input.moduleDir ?? import.meta.dirname;
+  const bundledNodePath = path.join(
+    moduleDir,
+    "excalidraw-mcp",
+    "skills",
+    CANVAS_SKILL_RELATIVE_PATH,
+  );
+  if (input.runtime === "node") {
+    return bundledNodePath;
+  }
+
+  if (input.runtime === undefined && !process.versions.bun && existsSync(bundledNodePath)) {
+    return bundledNodePath;
   }
 
   const packageRoot =

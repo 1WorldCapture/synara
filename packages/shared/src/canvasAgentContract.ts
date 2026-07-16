@@ -3,6 +3,7 @@
 // Layer: Shared runtime utility
 
 export const CANVAS_SKILL_NAME = "canvas" as const;
+export const SYNARA_BUILTIN_SKILL_SCOPE = "synara-builtin" as const;
 export const CANVAS_MCP_NAMESPACE = "canvas" as const;
 export const CANVAS_MCP_DISPLAY_NAME = "Synara Canvas" as const;
 

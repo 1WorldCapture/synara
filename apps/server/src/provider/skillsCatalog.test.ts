@@ -69,6 +69,79 @@ disable-model-invocation: true
 });
 
 describe("discoverSkillsCatalog", () => {
+  it.each(["codex", "claudeAgent", "cursor", "gemini", "grok", "droid"] as const)(
+    "includes the managed Canvas skill for supported provider %s",
+    async (provider) => {
+      const skills = await discoverSkillsCatalog({ homeDir, synaraBaseDir, provider });
+      const canvas = skills.find((skill) => skill.name === "canvas");
+
+      expect(canvas).toMatchObject({ scope: "synara-builtin", enabled: true });
+      expect(canvas?.path).toBe(
+        path.join(synaraBaseDir, "builtin-skills", "canvas", "SKILL.md"),
+      );
+    },
+  );
+
+  it.each(["kilo", "opencode", "pi"] as const)(
+    "omits only the managed Canvas skill for unsupported provider %s",
+    async (provider) => {
+      await writeSkill(path.join(synaraBaseDir, "skills", "canvas"), "canvas", "User Canvas");
+      await writeSkill(path.join(synaraBaseDir, "skills", "portable"), "portable", "Portable");
+
+      const skills = await discoverSkillsCatalog({ homeDir, synaraBaseDir, provider });
+
+      expect(skills.find((skill) => skill.name === "canvas")?.scope).toBe("synara");
+      expect(skills.some((skill) => skill.name === "portable")).toBe(true);
+      expect(skills.some((skill) => skill.scope === "synara-builtin")).toBe(false);
+    },
+  );
+
+  it("includes the managed origin in providerless duplicate-origin settings discovery", async () => {
+    await writeSkill(path.join(homeDir, ".codex", "skills", "canvas"), "canvas", "Codex Canvas");
+
+    const skills = await discoverSkillsCatalog({
+      homeDir,
+      synaraBaseDir,
+      includeDuplicateOrigins: true,
+    });
+
+    expect(
+      skills.filter((skill) => skill.name === "canvas").map((skill) => skill.scope),
+    ).toEqual(expect.arrayContaining(["synara-builtin", "codex"]));
+  });
+
+  it("ignores non-Canvas files in the managed root so ordinary precedence is unchanged", async () => {
+    await writeSkill(
+      path.join(synaraBaseDir, "builtin-skills", "reviewer"),
+      "reviewer",
+      "Unexpected managed file",
+    );
+    await writeSkill(
+      path.join(homeDir, ".codex", "skills", "reviewer"),
+      "reviewer",
+      "Codex reviewer",
+    );
+
+    const skills = await discoverSkillsCatalog({ homeDir, synaraBaseDir, provider: "codex" });
+
+    expect(skills.find((skill) => skill.name === "reviewer")?.scope).toBe("codex");
+  });
+
+  it("fails closed when the managed Canvas skill cannot be materialized", async () => {
+    await mkdir(synaraBaseDir, { recursive: true });
+    await writeFile(path.join(synaraBaseDir, "builtin-skills"), "blocks managed directory");
+    await writeSkill(path.join(synaraBaseDir, "skills", "portable"), "portable", "Portable");
+
+    const skills = await discoverSkillsCatalog({
+      homeDir,
+      synaraBaseDir,
+      provider: "codex",
+    });
+
+    expect(skills.some((skill) => skill.scope === "synara-builtin")).toBe(false);
+    expect(skills.some((skill) => skill.name === "portable")).toBe(true);
+  });
+
   it("creates the Synara skills folder on first discovery", async () => {
     await discoverSkillsCatalog({ homeDir, synaraBaseDir });
     await expect(access(path.join(synaraBaseDir, "skills"))).resolves.toBeUndefined();
@@ -140,7 +213,12 @@ describe("discoverSkillsCatalog", () => {
       includeDuplicateOrigins: true,
     });
     expect(settingsCatalog.filter((skill) => skill.name === "reviewer")).toHaveLength(2);
-    expect(settingsCatalog.map((skill) => skill.scope).sort()).toEqual(["claude", "codex"]);
+    expect(
+      settingsCatalog
+        .filter((skill) => skill.name === "reviewer")
+        .map((skill) => skill.scope)
+        .sort(),
+    ).toEqual(["claude", "codex"]);
   });
 
   it("prefers the provider-native copy and falls back to Synara for that provider", async () => {
@@ -292,6 +370,23 @@ describe("mergeSkillsIntoCatalog", () => {
       "codex-native",
     );
     expect(merged.some((skill) => skill.name === "extra")).toBe(true);
+  });
+
+  it("reserves only the normalized canvas name for the managed built-in origin", () => {
+    const merged = mergeSkillsIntoCatalog({
+      native: [descriptor("Canvas", "provider-native"), descriptor("shared", "provider-native")],
+      catalog: [
+        descriptor("canvas", "synara-builtin"),
+        descriptor("Shared", "synara-builtin"),
+      ],
+    });
+
+    expect(merged.find((skill) => skill.name.toLowerCase() === "canvas")?.scope).toBe(
+      "synara-builtin",
+    );
+    expect(merged.find((skill) => skill.name.toLowerCase() === "shared")?.scope).toBe(
+      "provider-native",
+    );
   });
 });
 

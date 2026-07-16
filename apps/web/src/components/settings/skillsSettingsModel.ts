@@ -37,6 +37,7 @@ export interface SettingsSkillSection {
 const SHARED_SKILLS_SECTION = "shared";
 const PERSONAL_ORIGIN = "personal";
 export const ORIGIN_SECTION_ORDER = [
+  "synara-builtin",
   "synara",
   "codex",
   "claude",
@@ -52,6 +53,8 @@ export const ORIGIN_SECTION_ORDER = [
 ] as const;
 export function skillOriginInfo(scope: string | undefined): SkillOriginInfo {
   switch (scope) {
+    case "synara-builtin":
+      return { label: "Built into Synara", provider: null };
     case "synara":
       return { label: "Synara", provider: null };
     case "codex":

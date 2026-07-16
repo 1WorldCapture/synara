@@ -906,6 +906,40 @@ describe("resolveCodexModelForAccount", () => {
 });
 
 describe("startSession", () => {
+  it("materializes Canvas before registering deterministic personal and built-in roots", async () => {
+    const baseDir = mkdtempSync(path.join(os.tmpdir(), "synara-codex-skills-"));
+    const personalRoot = path.join(baseDir, "skills");
+    const manager = new CodexAppServerManager(undefined, {
+      synaraSkillsDir: personalRoot,
+      synaraBaseDir: baseDir,
+    });
+    const context = {};
+    const sendRequest = vi
+      .spyOn(
+        manager as unknown as { sendRequest: (...args: unknown[]) => Promise<unknown> },
+        "sendRequest",
+      )
+      .mockResolvedValue({});
+
+    try {
+      await (
+        manager as unknown as {
+          registerSynaraSkillsRoots: (context: unknown) => Promise<void>;
+        }
+      ).registerSynaraSkillsRoots(context);
+
+      const builtinRoot = path.join(baseDir, "builtin-skills");
+      expect(readFileSync(path.join(builtinRoot, "canvas", "SKILL.md"), "utf8")).toContain(
+        "name: canvas",
+      );
+      expect(sendRequest).toHaveBeenCalledWith(context, "skills/extraRoots/set", {
+        extraRoots: [personalRoot, builtinRoot],
+      });
+    } finally {
+      rmSync(baseDir, { recursive: true, force: true });
+    }
+  });
+
   it("enables Codex experimental api capabilities during initialize", () => {
     expect(buildCodexInitializeParams()).toEqual({
       clientInfo: {

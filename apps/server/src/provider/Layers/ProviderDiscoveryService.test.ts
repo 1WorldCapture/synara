@@ -120,7 +120,10 @@ describe("ProviderDiscoveryService.listSkills", () => {
 
     const result = await runListSkills({ adapter: {}, provider: "antigravity" });
 
-    expect(result.skills.map((skill) => skill.name)).toEqual(["portable"]);
+    expect(result.skills.map((skill) => skill.name)).toEqual(
+      expect.arrayContaining(["canvas", "portable"]),
+    );
+    expect(result.skills.find((skill) => skill.name === "canvas")?.scope).toBe("synara-builtin");
   });
 
   it("prefers provider-native entries and appends catalog-only skills", async () => {
@@ -144,6 +147,47 @@ describe("ProviderDiscoveryService.listSkills", () => {
     const shared = result.skills.find((skill) => skill.name === "shared");
     expect(shared?.path).toBe(nativeShared.path);
     expect(result.skills.some((skill) => skill.name === "portable")).toBe(true);
+  });
+
+  it("keeps managed Canvas ahead of a provider-native collision", async () => {
+    const result = await runListSkills({
+      adapter: {
+        listSkills: () =>
+          Effect.succeed({
+            skills: [
+              {
+                name: "Canvas",
+                path: path.join(homeDir, ".codex", "skills", "canvas", "SKILL.md"),
+                enabled: true,
+                scope: "user",
+              },
+            ],
+            source: "codex-app-server",
+            cached: false,
+          }),
+      },
+      provider: "codex",
+    });
+
+    expect(result.skills.filter((skill) => skill.name.toLowerCase() === "canvas")).toHaveLength(1);
+    expect(result.skills.find((skill) => skill.name.toLowerCase() === "canvas")?.scope).toBe(
+      "synara-builtin",
+    );
+  });
+
+  it("applies the disabled-name filter after managed Canvas precedence", async () => {
+    const result = await runListSkills({ adapter: {}, disabled: ["Canvas"], provider: "codex" });
+
+    expect(result.skills.some((skill) => skill.name.toLowerCase() === "canvas")).toBe(false);
+  });
+
+  it("does not inject managed Canvas for unsupported providers", async () => {
+    await writeSkill(path.join(baseDir, "skills", "canvas"), "canvas");
+
+    const result = await runListSkills({ adapter: {}, provider: "opencode" });
+
+    expect(result.skills.find((skill) => skill.name === "canvas")?.scope).toBe("synara");
+    expect(result.skills.some((skill) => skill.scope === "synara-builtin")).toBe(false);
   });
 
   it("filters user-disabled skills from merged results", async () => {
@@ -176,7 +220,9 @@ describe("ProviderDiscoveryService.listSkills", () => {
       provider: "codex",
     });
 
-    expect(result.skills.map((skill) => skill.name)).toEqual(["portable"]);
+    expect(result.skills.map((skill) => skill.name)).toEqual(
+      expect.arrayContaining(["canvas", "portable"]),
+    );
   });
 });
 

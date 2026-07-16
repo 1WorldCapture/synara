@@ -3,7 +3,7 @@
 //          walking) plus the unified cross-provider skills catalog backing Synara
 //          portable skills. Aggregates `~/.synara/skills` with every provider-native
 //          skills folder, deduping by name with provider-native copies winning for
-//          the active provider.
+//          the active provider except for Synara's reserved managed Canvas Skill.
 // Layer: Server provider discovery helper
 // Exports: parseSkillFrontmatter, collectSkillsFromRoots, discoverSkillsCatalog,
 //          mergeSkillsIntoCatalog, filterDisabledSkills, ensureSynaraSkillsDir
@@ -12,6 +12,17 @@ import * as fs from "node:fs/promises";
 import * as nodePath from "node:path";
 
 import type { ProviderKind, ProviderSkillDescriptor } from "@synara/contracts";
+import { CANVAS_SKILL_NAME } from "@synara/shared/canvasAgentContract";
+import { isCanvasProviderSupported } from "@synara/shared/canvasProvider";
+
+import { createLogger } from "../logger.ts";
+import {
+  builtinSkillsRoot,
+  materializeBuiltinCanvasSkill,
+  SYNARA_BUILTIN_SKILL_SCOPE,
+} from "./builtinCanvasSkill.ts";
+
+const log = createLogger("skills-catalog");
 
 type FrontmatterValue = string | boolean;
 
@@ -331,7 +342,10 @@ const HOME_ORIGIN_ORDER = [
   "pi",
   "agents",
 ] as const;
-export type SkillsCatalogOrigin = (typeof HOME_ORIGIN_ORDER)[number] | "project";
+export type SkillsCatalogOrigin =
+  | (typeof HOME_ORIGIN_ORDER)[number]
+  | typeof SYNARA_BUILTIN_SKILL_SCOPE
+  | "project";
 
 // Composer skill pickers refetch aggressively (per keystroke, per provider); a
 // short TTL absorbs that burst while still picking up new skill files quickly.
@@ -528,10 +542,19 @@ function rootsForOrderedOrigins(
 }
 
 export function skillsCatalogRoots(input: SkillsCatalogRootInput): SkillRoot[] {
-  return rootsForOrderedOrigins(
+  const roots = rootsForOrderedOrigins(
     input,
     orderedOriginsForProvider(input.provider, input.includeSynaraRoot !== false),
   );
+  return shouldIncludeBuiltinCanvasSkill(input)
+    ? [
+        {
+          path: builtinSkillsRoot(input.synaraBaseDir),
+          scope: SYNARA_BUILTIN_SKILL_SCOPE,
+        },
+        ...roots,
+      ]
+    : roots;
 }
 
 export function providerNativeSkillRoots(input: SkillsCatalogRootInput): SkillRoot[] {
@@ -563,9 +586,25 @@ export async function discoverSkillsCatalog(
 
   const scan = (async () => {
     await ensureSynaraSkillsDir(input.synaraBaseDir);
+    let includeManagedCanvas = false;
+    if (shouldIncludeBuiltinCanvasSkill(input)) {
+      const managedPath = await materializeBuiltinCanvasSkill({ baseDir: input.synaraBaseDir });
+      includeManagedCanvas = managedPath !== null;
+      if (!includeManagedCanvas) {
+        log.warn("managed Canvas Skill materialization failed; omitting the built-in descriptor", {
+          provider: input.provider ?? null,
+          baseDir: input.synaraBaseDir,
+        });
+      }
+    }
+    const discovered = (await collectSkillDescriptorsFromRoots(skillsCatalogRoots(input))).filter(
+      (skill) =>
+        skill.scope !== SYNARA_BUILTIN_SKILL_SCOPE ||
+        (includeManagedCanvas && skillNameKey(skill.name) === CANVAS_SKILL_NAME),
+    );
     const skills = input.includeDuplicateOrigins
-      ? await collectSkillDescriptorsFromRoots(skillsCatalogRoots(input))
-      : await collectSkillsFromRoots(skillsCatalogRoots(input));
+      ? discovered
+      : dedupeSkillsWithReservedBuiltinCanvas(discovered);
 
     skillsCatalogCache.delete(cacheKey);
     skillsCatalogCache.set(cacheKey, { at: Date.now(), skills });
@@ -587,7 +626,40 @@ export async function discoverSkillsCatalog(
   }
 }
 
-// Provider-native discovery results win on name conflicts; catalog entries fill the gaps.
+function shouldIncludeBuiltinCanvasSkill(input: SkillsCatalogDiscoveryInput): boolean {
+  if (input.provider) {
+    return isCanvasProviderSupported(input.provider);
+  }
+  return input.includeDuplicateOrigins === true;
+}
+
+function managedCanvasWins(
+  existing: ProviderSkillDescriptor | undefined,
+  candidate: ProviderSkillDescriptor,
+): boolean {
+  return (
+    skillNameKey(candidate.name) === CANVAS_SKILL_NAME &&
+    candidate.scope === SYNARA_BUILTIN_SKILL_SCOPE &&
+    existing?.scope !== SYNARA_BUILTIN_SKILL_SCOPE
+  );
+}
+
+function dedupeSkillsWithReservedBuiltinCanvas(
+  skills: ReadonlyArray<ProviderSkillDescriptor>,
+): ProviderSkillDescriptor[] {
+  const byName = new Map<string, ProviderSkillDescriptor>();
+  for (const skill of skills) {
+    const key = skillNameKey(skill.name);
+    const existing = byName.get(key);
+    if (!existing || managedCanvasWins(existing, skill)) {
+      byName.set(key, skill);
+    }
+  }
+  return [...byName.values()];
+}
+
+// Provider-native discovery results win on ordinary conflicts. The single
+// reserved Canvas name is owned by Synara's managed origin when it is present.
 export function mergeSkillsIntoCatalog(input: {
   readonly native: ReadonlyArray<ProviderSkillDescriptor>;
   readonly catalog: ReadonlyArray<ProviderSkillDescriptor>;
@@ -595,7 +667,8 @@ export function mergeSkillsIntoCatalog(input: {
   const byName = new Map<string, ProviderSkillDescriptor>();
   for (const skill of [...input.native, ...input.catalog]) {
     const key = skillNameKey(skill.name);
-    if (!byName.has(key)) {
+    const existing = byName.get(key);
+    if (!existing || managedCanvasWins(existing, skill)) {
       byName.set(key, skill);
     }
   }

@@ -7,6 +7,10 @@ import type {
   ProviderSkillDescriptor,
 } from "@synara/contracts";
 import { getAgentMentionAutocompleteAliases } from "@synara/contracts";
+import {
+  CANVAS_SKILL_NAME,
+  SYNARA_BUILTIN_SKILL_SCOPE,
+} from "@synara/shared/canvasAgentContract";
 import { useMemo } from "react";
 import {
   buildCommandSearchFields,
@@ -45,6 +49,21 @@ type SearchableModelOption = {
   searchProvider: string;
   searchUpstreamProvider: string;
 };
+
+export function filterProviderNativeCommandsForManagedSkills(
+  commands: readonly ProviderNativeCommandDescriptor[],
+  skills: readonly ProviderSkillDescriptor[],
+): ProviderNativeCommandDescriptor[] {
+  const hasManagedCanvas = skills.some(
+    (skill) =>
+      normalizeProviderDiscoveryText(skill.name) === CANVAS_SKILL_NAME &&
+      skill.scope === SYNARA_BUILTIN_SKILL_SCOPE,
+  );
+  if (!hasManagedCanvas) return [...commands];
+  return commands.filter(
+    (command) => normalizeProviderDiscoveryText(command.name) !== CANVAS_SKILL_NAME,
+  );
+}
 
 export function useComposerCommandMenuItems(input: {
   composerTrigger: ComposerTrigger | null;
@@ -183,7 +202,10 @@ export function useComposerCommandMenuItems(input: {
         description: definition.description,
         source: definition.source,
       }));
-      const providerCommandItems = providerNativeCommands
+      const providerCommandItems = filterProviderNativeCommandsForManagedSkills(
+        providerNativeCommands,
+        providerSkills,
+      )
         .filter(
           (command) =>
             !shouldHideProviderNativeCommandFromComposerMenu(provider, command.name, {
