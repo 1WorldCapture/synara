@@ -2,6 +2,10 @@ import { randomUUID } from "node:crypto";
 
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import type { CallToolResult } from "@modelcontextprotocol/sdk/types.js";
+import {
+  CANVAS_MCP_DISPLAY_NAME,
+  CANVAS_TOOL_NAMES,
+} from "@synara/shared/canvasAgentContract";
 import { z } from "zod";
 
 import {
@@ -16,32 +20,14 @@ import {
 import { applyElementOperations } from "./scene";
 
 const MAX_INPUT_BYTES = 5 * 1024 * 1024;
+const MCP_VERSION = "0.4.0-synara.1";
+const [READ_TOOL_NAME, BEGIN_TOOL_NAME, APPEND_TOOL_NAME, COMMIT_TOOL_NAME, CANCEL_TOOL_NAME] =
+  CANVAS_TOOL_NAMES;
 
-export const CANVAS_AGENT_GUIDE = `# Synara Excalidraw tools
-
-Always call read_scene before changing an existing drawing. Ask exactly one focused
-clarifying question when a choice changes factual structure (for example TCP/IP
-four-layer versus five-layer); choose sensible defaults for purely visual choices.
-Use stable unique ids and preserve elements the user did not ask to change.
-
-For non-trivial drawings, call begin_view once, then append_view repeatedly with
-small semantic batches (usually 3-8 elements), then commit_view once. Put a
-cameraUpdate before each semantic batch so the user can follow the work. Use
-create_view only for small one-shot edits; Synara replays those edits as a visual
-fallback before the atomic save.
-
-Each elements argument is a JSON array string. Common elements use type, id, x, y,
-width, height; rectangles may include label: {text, fontSize}; arrows use points
-and endArrowhead. A camera pseudo-element uses
-{"type":"cameraUpdate","x":0,"y":0,"width":800,"height":600}. Use readable
-fonts (16+ body, 20+ headings), consistent directions, pastel fills, and clear
-hierarchy. A delete pseudo-element uses {"type":"delete","ids":"id1,id2"}.
-Preview batches never write the drawing; commit_view performs one revision-checked
-atomic save. Call cancel_view if the drawing cannot be completed.`;
-
-const REPLAY_BATCH_SIZE = 4;
-const REPLAY_DELAY_MS = 120;
-const REPLAY_MAX_TOTAL_DELAY_MS = 5_000;
+const CANVAS_MCP_INSTRUCTIONS =
+  "When using Synara Canvas, follow read → begin → append (one or more small semantic batches) " +
+  "→ commit, or cancel to discard the preview. Begin and append never save; commit performs one " +
+  "revision-checked atomic save. Preserve elements the user did not ask to change.";
 
 interface ActivePreview {
   readonly streamId: string;
@@ -85,30 +71,6 @@ function cameraFromOperations(
   };
 }
 
-function replayBatches(
-  operations: ReadonlyArray<Record<string, unknown>>,
-): Array<Array<Record<string, unknown>>> {
-  const batches: Array<Array<Record<string, unknown>>> = [];
-  let batch: Array<Record<string, unknown>> = [];
-  let renderOperations = 0;
-  const flush = () => {
-    if (batch.length === 0) return;
-    batches.push(batch);
-    batch = [];
-    renderOperations = 0;
-  };
-  for (const operation of operations) {
-    if (operation.type === "cameraUpdate" && batch.length > 0) flush();
-    batch.push(operation);
-    if (operation.type !== "cameraUpdate") renderOperations += 1;
-    if (renderOperations >= REPLAY_BATCH_SIZE) flush();
-  }
-  flush();
-  return batches;
-}
-
-const wait = (delayMs: number) => new Promise<void>((resolve) => setTimeout(resolve, delayMs));
-
 function toolError(error: unknown): CallToolResult {
   return {
     content: [{ type: "text", text: error instanceof Error ? error.message : String(error) }],
@@ -117,7 +79,10 @@ function toolError(error: unknown): CallToolResult {
 }
 
 export function createServer(config: CanvasBridgeConfig = readBridgeConfig()): McpServer {
-  const server = new McpServer({ name: "Synara Excalidraw", version: "0.3.2-synara.1" });
+  const server = new McpServer(
+    { name: CANVAS_MCP_DISPLAY_NAME, version: MCP_VERSION },
+    { instructions: CANVAS_MCP_INSTRUCTIONS },
+  );
   const checkpoints = new Map<string, ReadonlyArray<Record<string, unknown>>>();
   const failedPreviewStreams = new Set<string>();
   let activePreview: ActivePreview | null = null;
@@ -228,18 +193,10 @@ export function createServer(config: CanvasBridgeConfig = readBridgeConfig()): M
   };
 
   server.registerTool(
-    "read_me",
+    READ_TOOL_NAME,
     {
-      description: "Read the Synara Excalidraw scene and collaboration contract.",
-      annotations: { readOnlyHint: true },
-    },
-    async () => ({ content: [{ type: "text", text: CANVAS_AGENT_GUIDE }] }),
-  );
-
-  server.registerTool(
-    "read_scene",
-    {
-      description: "Read the current editable Excalidraw scene before modifying it.",
+      description:
+        "Read-only. Read the current editable scene and revision metadata; call begin before changing it.",
       annotations: { readOnlyHint: true },
     },
     async () => {
@@ -259,15 +216,17 @@ export function createServer(config: CanvasBridgeConfig = readBridgeConfig()): M
   );
 
   server.registerTool(
-    "begin_view",
+    BEGIN_TOOL_NAME,
     {
       description:
-        "Begin an ephemeral drawing preview. Call once before append_view batches; it does not save.",
+        "Start an ephemeral preview from the latest scene without saving. It cancels an abandoned preview; call append next.",
     },
     async () => serializePreviewMutation(async () => {
       try {
-        if (activePreview) {
-          await cancelPreview(activePreview);
+        const abandonedPreview = activePreview;
+        activePreview = null;
+        if (abandonedPreview) {
+          await cancelPreview(abandonedPreview);
         }
         const base = await readScene(config);
         activePreview = {
@@ -294,15 +253,15 @@ export function createServer(config: CanvasBridgeConfig = readBridgeConfig()): M
   );
 
   server.registerTool(
-    "append_view",
+    APPEND_TOOL_NAME,
     {
       description:
-        "Append a small semantic batch to the active preview. Include cameraUpdate before new content.",
+        "Requires an active preview. Apply and immediately preview one small semantic batch without saving; append again or commit.",
       inputSchema: { elements: z.string().max(MAX_INPUT_BYTES) },
     },
     async ({ elements }) => serializePreviewMutation(async () => {
       try {
-        if (!activePreview) throw new Error("Call begin_view before append_view.");
+        if (!activePreview) throw new Error("Call begin before append.");
         const operations = parseOperations(elements);
         const camera = cameraFromOperations(operations);
         activePreview.scene = applyOperations(activePreview.scene, operations);
@@ -333,13 +292,14 @@ export function createServer(config: CanvasBridgeConfig = readBridgeConfig()): M
   );
 
   server.registerTool(
-    "commit_view",
+    COMMIT_TOOL_NAME,
     {
-      description: "Atomically save the active drawing preview after all append_view batches.",
+      description:
+        "Requires an active preview. Revision-check and atomically save it exactly once, then complete the preview.",
     },
     async () => serializePreviewMutation(async () => {
       const preview = activePreview;
-      if (!preview) return toolError(new Error("Call begin_view before commit_view."));
+      if (!preview) return toolError(new Error("Call begin before commit."));
       activePreview = null;
       try {
         return await commitPreview(preview);
@@ -351,9 +311,10 @@ export function createServer(config: CanvasBridgeConfig = readBridgeConfig()): M
   );
 
   server.registerTool(
-    "cancel_view",
+    CANCEL_TOOL_NAME,
     {
-      description: "Discard the active preview without changing the saved drawing.",
+      description:
+        "Requires an active preview. Discard it and restore the last saved scene without saving.",
     },
     async () => serializePreviewMutation(async () => {
       const preview = activePreview;
@@ -361,54 +322,6 @@ export function createServer(config: CanvasBridgeConfig = readBridgeConfig()): M
       activePreview = null;
       await cancelPreview(preview);
       return { content: [{ type: "text", text: "Drawing preview cancelled." }] };
-    }),
-  );
-
-  server.registerTool(
-    "create_view",
-    {
-      description: "Atomically apply editable Excalidraw element operations to the current drawing.",
-      inputSchema: { elements: z.string().max(MAX_INPUT_BYTES) },
-    },
-    async ({ elements }) => serializePreviewMutation(async () => {
-      let preview: ActivePreview | null = null;
-      try {
-        if (activePreview) {
-          await cancelPreview(activePreview);
-          activePreview = null;
-        }
-        const operations = parseOperations(elements);
-        const current = await readScene(config);
-        preview = {
-          streamId: randomUUID(),
-          base: current,
-          scene: current.scene,
-          sequence: 0,
-          previewDelivered: true,
-        };
-        await emitPreview(preview, "start");
-        const batches = replayBatches(operations);
-        const replayDelayMs = Math.min(
-          REPLAY_DELAY_MS,
-          REPLAY_MAX_TOTAL_DELAY_MS / Math.max(1, batches.length - 1),
-        );
-        for (let index = 0; index < batches.length; index += 1) {
-          const batch = batches[index]!;
-          preview.scene = applyOperations(preview.scene, batch);
-          preview.sequence += 1;
-          await emitPreview(
-            preview,
-            "partial",
-            streamedOperations(preview, batch),
-            cameraFromOperations(batch),
-          );
-          if (index < batches.length - 1) await wait(replayDelayMs);
-        }
-        return await commitPreview(preview);
-      } catch (error) {
-        if (preview) await cancelPreview(preview);
-        return toolError(error);
-      }
     }),
   );
 

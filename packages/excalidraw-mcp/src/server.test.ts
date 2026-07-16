@@ -3,12 +3,27 @@ import { once } from "node:events";
 
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { InMemoryTransport } from "@modelcontextprotocol/sdk/inMemory.js";
+import {
+  CANVAS_MCP_DISPLAY_NAME,
+  CANVAS_TOOL_NAMES,
+} from "@synara/shared/canvasAgentContract";
 import { afterEach, describe, expect, it } from "vitest";
 
-import type { BridgeSceneSnapshot } from "./bridge";
+import type { BridgeSceneSnapshot, CanvasBridgeConfig } from "./bridge";
 import { createServer } from "./server";
 
 const servers: Server[] = [];
+const MCP_VERSION = "0.4.0-synara.1";
+const MAX_INPUT_BYTES = 5 * 1024 * 1024;
+const LEGACY_TOOL_NAMES = [
+  "read_me",
+  "read_scene",
+  "begin_view",
+  "append_view",
+  "commit_view",
+  "cancel_view",
+  "create_view",
+] as const;
 
 afterEach(async () => {
   await Promise.all(
@@ -18,11 +33,22 @@ afterEach(async () => {
   );
 });
 
-async function startBridge(options: { readonly previewStatus?: number } = {}) {
+async function startBridge(
+  options: {
+    readonly previewStatus?: number;
+    readonly conflictOnSave?: boolean;
+    readonly initialElements?: ReadonlyArray<Record<string, unknown>>;
+  } = {},
+) {
   let revision = "revision-1";
-  let scene: BridgeSceneSnapshot["scene"] = { elements: [], appState: {}, files: {} };
+  let scene: BridgeSceneSnapshot["scene"] = {
+    elements: options.initialElements ?? [],
+    appState: {},
+    files: {},
+  };
   const previews: Array<Record<string, unknown>> = [];
   let saveCount = 0;
+  let saveAttemptCount = 0;
   const server = createHttpServer(async (request, response) => {
     const chunks: Buffer[] = [];
     for await (const chunk of request) chunks.push(Buffer.from(chunk));
@@ -37,7 +63,12 @@ async function startBridge(options: { readonly previewStatus?: number } = {}) {
     }
 
     if (request.url?.endsWith("/save")) {
+      saveAttemptCount += 1;
       expect(body.expectedRevision).toBe(revision);
+      if (options.conflictOnSave) {
+        response.writeHead(409).end();
+        return;
+      }
       scene = body.scene as BridgeSceneSnapshot["scene"];
       revision = `revision-${Number(revision.split("-")[1]) + 1}`;
       saveCount += 1;
@@ -62,122 +93,331 @@ async function startBridge(options: { readonly previewStatus?: number } = {}) {
     readScene: () => scene,
     readPreviews: () => previews,
     readSaveCount: () => saveCount,
+    readSaveAttemptCount: () => saveAttemptCount,
   };
 }
 
-describe("Synara Excalidraw MCP server", () => {
-  it("initializes, lists bounded tools, and edits only the configured drawing", async () => {
+async function connectClient(config: CanvasBridgeConfig) {
+  const [clientTransport, serverTransport] = InMemoryTransport.createLinkedPair();
+  const mcpServer = createServer(config);
+  const client = new Client({ name: "synara-mcp-test", version: "1.0.0" });
+  await Promise.all([mcpServer.connect(serverTransport), client.connect(clientTransport)]);
+  return {
+    client,
+    close: async () => {
+      await client.close();
+      await mcpServer.close();
+    },
+  };
+}
+
+describe("Synara Canvas MCP server", () => {
+  it("initializes with conditional guidance and lists exactly the shared five-tool contract", async () => {
     const bridge = await startBridge();
-    const [clientTransport, serverTransport] = InMemoryTransport.createLinkedPair();
-    const mcpServer = createServer(bridge.config);
-    const client = new Client({ name: "synara-mcp-test", version: "1.0.0" });
-    await Promise.all([mcpServer.connect(serverTransport), client.connect(clientTransport)]);
+    const connection = await connectClient(bridge.config);
 
-    expect((await client.listTools()).tools.map((tool) => tool.name)).toEqual([
-      "read_me",
-      "read_scene",
-      "begin_view",
-      "append_view",
-      "commit_view",
-      "cancel_view",
-      "create_view",
-    ]);
-    const read = await client.callTool({ name: "read_scene", arguments: {} });
-    expect(read.isError).not.toBe(true);
-
-    const first = await client.callTool({
-      name: "create_view",
-      arguments: {
-        elements: JSON.stringify([
-          {
-            id: "layer-transport",
-            type: "rectangle",
-            x: 100,
-            y: 200,
-            width: 500,
-            height: 100,
-            label: { text: "Transport · TCP · UDP" },
-          },
-        ]),
-      },
+    expect(connection.client.getServerVersion()).toEqual({
+      name: CANVAS_MCP_DISPLAY_NAME,
+      version: MCP_VERSION,
     });
-    expect(first.isError).not.toBe(true);
-    expect(first.structuredContent).toMatchObject({ previewDelivered: true });
-    expect(bridge.readScene().elements).toHaveLength(1);
-    expect(bridge.readScene().elements[0]?.id).toBe("layer-transport");
-    expect(bridge.readPreviews().map((preview) => preview.phase)).toEqual([
-      "start",
-      "partial",
-      "complete",
-    ]);
+    const instructions = connection.client.getInstructions();
+    expect(instructions).toContain("When using Synara Canvas");
+    expect(instructions).toContain("read → begin → append");
 
-    await client.close();
-    await mcpServer.close();
+    const tools = (await connection.client.listTools()).tools;
+    expect(tools.map((tool) => tool.name)).toEqual(CANVAS_TOOL_NAMES);
+    expect(
+      tools.every(
+        (tool) => typeof tool.description === "string" && tool.description.trim().length > 0,
+      ),
+    ).toBe(true);
+
+    const read = await connection.client.callTool({ name: "read", arguments: {} });
+    expect(read.isError).not.toBe(true);
+    expect(read).toMatchObject({
+      structuredContent: { revision: "revision-1", elementCount: 0 },
+    });
+    expect(bridge.readSaveAttemptCount()).toBe(0);
+
+    const advertisedText = [instructions, ...tools.map((tool) => tool.description)].join("\n");
+    for (const legacyName of LEGACY_TOOL_NAMES) {
+      expect(advertisedText).not.toContain(legacyName);
+      const result = await connection.client.callTool({ name: legacyName, arguments: {} });
+      expect(result).toMatchObject({ isError: true });
+      expect(result.content).toEqual([
+        expect.objectContaining({ type: "text", text: expect.stringContaining("not found") }),
+      ]);
+    }
+    expect(bridge.readSaveAttemptCount()).toBe(0);
+
+    await connection.close();
   });
 
-  it("previews chunked drawing batches without saving until commit", async () => {
+  it("streams two ordered semantic batches before one revision-checked commit", async () => {
     const bridge = await startBridge();
-    const [clientTransport, serverTransport] = InMemoryTransport.createLinkedPair();
-    const mcpServer = createServer(bridge.config);
-    const client = new Client({ name: "synara-mcp-test", version: "1.0.0" });
-    await Promise.all([mcpServer.connect(serverTransport), client.connect(clientTransport)]);
+    const connection = await connectClient(bridge.config);
 
-    expect((await client.callTool({ name: "begin_view", arguments: {} })).isError).not.toBe(true);
-    expect(
-      (
-        await client.callTool({
-          name: "append_view",
-          arguments: {
-            elements: JSON.stringify([
-              { type: "cameraUpdate", x: 40, y: 60, width: 640, height: 480 },
-              { id: "box-1", type: "rectangle", x: 80, y: 100, width: 240, height: 120 },
-            ]),
-          },
-        })
-      ).isError,
-    ).not.toBe(true);
+    const begin = await connection.client.callTool({ name: "begin", arguments: {} });
+    expect(begin.isError).not.toBe(true);
+    expect(begin).toMatchObject({ structuredContent: { previewDelivered: true } });
+
+    const [firstAppend, secondAppend] = await Promise.all([
+      connection.client.callTool({
+        name: "append",
+        arguments: {
+          elements: JSON.stringify([
+            { type: "cameraUpdate", x: 40, y: 60, width: 640, height: 480 },
+            { id: "box-1", type: "rectangle", x: 80, y: 100, width: 240, height: 120 },
+          ]),
+        },
+      }),
+      connection.client.callTool({
+        name: "append",
+        arguments: {
+          elements: JSON.stringify([
+            { type: "cameraUpdate", x: 320, y: 60, width: 640, height: 480 },
+            { id: "box-2", type: "rectangle", x: 400, y: 100, width: 240, height: 120 },
+          ]),
+        },
+      }),
+    ]);
+
+    expect(firstAppend.isError).not.toBe(true);
+    expect(firstAppend).toMatchObject({
+      structuredContent: { sequence: 1, previewDelivered: true },
+    });
+    expect(secondAppend.isError).not.toBe(true);
+    expect(secondAppend).toMatchObject({
+      structuredContent: { sequence: 2, previewDelivered: true },
+    });
     expect(bridge.readSaveCount()).toBe(0);
     expect(bridge.readScene().elements).toEqual([]);
-    expect(bridge.readPreviews().at(-1)).toMatchObject({
-      phase: "partial",
-      sequence: 1,
+    expect(bridge.readPreviews().map(({ phase, sequence }) => ({ phase, sequence }))).toEqual([
+      { phase: "start", sequence: 0 },
+      { phase: "partial", sequence: 1 },
+      { phase: "partial", sequence: 2 },
+    ]);
+    expect(bridge.readPreviews()[1]).toMatchObject({
       camera: { x: 40, y: 60, width: 640, height: 480 },
       operations: expect.arrayContaining([expect.objectContaining({ id: "box-1" })]),
     });
 
-    expect((await client.callTool({ name: "commit_view", arguments: {} })).isError).not.toBe(
-      true,
-    );
+    const commit = await connection.client.callTool({ name: "commit", arguments: {} });
+    expect(commit.isError).not.toBe(true);
+    expect(commit).toMatchObject({
+      structuredContent: { revision: "revision-2", elementCount: 2, previewDelivered: true },
+    });
+    expect(bridge.readSaveAttemptCount()).toBe(1);
     expect(bridge.readSaveCount()).toBe(1);
-    expect(bridge.readScene().elements[0]?.id).toBe("box-1");
-    expect(bridge.readPreviews().at(-1)).toMatchObject({ phase: "complete", sequence: 2 });
+    expect(bridge.readScene().elements.map((element) => element.id)).toEqual(["box-1", "box-2"]);
+    expect(bridge.readPreviews().at(-1)).toMatchObject({ phase: "complete", sequence: 3 });
 
-    await client.close();
-    await mcpServer.close();
+    await connection.close();
   });
 
-  it("keeps preview transport failures from blocking the atomic save", async () => {
-    const bridge = await startBridge({ previewStatus: 500 });
-    const [clientTransport, serverTransport] = InMemoryTransport.createLinkedPair();
-    const mcpServer = createServer(bridge.config);
-    const client = new Client({ name: "synara-mcp-test", version: "1.0.0" });
-    await Promise.all([mcpServer.connect(serverTransport), client.connect(clientTransport)]);
+  it("rejects append, commit, and cancel when no preview is active", async () => {
+    const bridge = await startBridge();
+    const connection = await connectClient(bridge.config);
 
-    const result = await client.callTool({
-      name: "create_view",
+    const append = await connection.client.callTool({
+      name: "append",
+      arguments: { elements: "[]" },
+    });
+    const commit = await connection.client.callTool({ name: "commit", arguments: {} });
+    const cancel = await connection.client.callTool({ name: "cancel", arguments: {} });
+
+    expect(append).toMatchObject({ isError: true });
+    expect(commit).toMatchObject({ isError: true });
+    expect(cancel).toMatchObject({ isError: true });
+    expect(append.content).toEqual([
+      expect.objectContaining({ type: "text", text: expect.stringContaining("Call begin") }),
+    ]);
+    expect(commit.content).toEqual([
+      expect.objectContaining({ type: "text", text: expect.stringContaining("Call begin") }),
+    ]);
+    expect(cancel.content).toEqual([
+      expect.objectContaining({
+        type: "text",
+        text: expect.stringContaining("no active drawing preview"),
+      }),
+    ]);
+    expect(bridge.readPreviews()).toEqual([]);
+    expect(bridge.readSaveAttemptCount()).toBe(0);
+
+    await connection.close();
+  });
+
+  it("cancels an abandoned stream before a new begin and preserves the saved scene on cancel", async () => {
+    const savedElement = { id: "saved", type: "rectangle", x: 10, y: 10 };
+    const bridge = await startBridge({ initialElements: [savedElement] });
+    const connection = await connectClient(bridge.config);
+
+    await connection.client.callTool({ name: "begin", arguments: {} });
+    await connection.client.callTool({
+      name: "append",
       arguments: {
         elements: JSON.stringify([
-          { id: "saved-despite-preview-error", type: "rectangle", x: 0, y: 0 },
+          { id: "temporary-1", type: "rectangle", x: 100, y: 100 },
         ]),
       },
     });
+    await connection.client.callTool({ name: "begin", arguments: {} });
+    expect(bridge.readPreviews().map((preview) => preview.phase)).toEqual([
+      "start",
+      "partial",
+      "cancelled",
+      "start",
+    ]);
+    expect(bridge.readPreviews()[2]).toMatchObject({ sequence: 2 });
 
-    expect(result.isError).not.toBe(true);
-    expect(result.structuredContent).toMatchObject({ previewDelivered: false });
+    await connection.client.callTool({
+      name: "append",
+      arguments: {
+        elements: JSON.stringify([
+          { id: "temporary-2", type: "rectangle", x: 200, y: 200 },
+        ]),
+      },
+    });
+    const cancel = await connection.client.callTool({ name: "cancel", arguments: {} });
+    expect(cancel.isError).not.toBe(true);
+    expect(bridge.readPreviews().at(-1)).toMatchObject({ phase: "cancelled", sequence: 2 });
+    expect(bridge.readScene().elements).toEqual([savedElement]);
+    expect(bridge.readSaveAttemptCount()).toBe(0);
+
+    expect((await connection.client.callTool({ name: "begin", arguments: {} })).isError).not.toBe(
+      true,
+    );
+
+    await connection.close();
+  });
+
+  it("cancels preview semantics on revision conflict without overwriting the saved scene", async () => {
+    const savedElement = { id: "saved", type: "rectangle", x: 10, y: 10 };
+    const bridge = await startBridge({ conflictOnSave: true, initialElements: [savedElement] });
+    const connection = await connectClient(bridge.config);
+
+    await connection.client.callTool({ name: "begin", arguments: {} });
+    await connection.client.callTool({
+      name: "append",
+      arguments: {
+        elements: JSON.stringify([
+          { id: "temporary-1", type: "rectangle", x: 100, y: 100 },
+        ]),
+      },
+    });
+    await connection.client.callTool({
+      name: "append",
+      arguments: {
+        elements: JSON.stringify([
+          { id: "temporary-2", type: "rectangle", x: 200, y: 200 },
+        ]),
+      },
+    });
+    const commit = await connection.client.callTool({ name: "commit", arguments: {} });
+
+    expect(commit).toMatchObject({ isError: true });
+    expect(commit.content).toEqual([
+      expect.objectContaining({
+        type: "text",
+        text: expect.stringContaining("Drawing changed while the agent was editing it"),
+      }),
+    ]);
+    expect(bridge.readPreviews().map((preview) => preview.phase)).toEqual([
+      "start",
+      "partial",
+      "partial",
+      "cancelled",
+    ]);
+    expect(bridge.readSaveAttemptCount()).toBe(1);
+    expect(bridge.readSaveCount()).toBe(0);
+    expect(bridge.readScene().elements).toEqual([savedElement]);
+
+    await connection.close();
+  });
+
+  it("keeps preview transport failures from blocking exactly one atomic save", async () => {
+    const bridge = await startBridge({ previewStatus: 500 });
+    const connection = await connectClient(bridge.config);
+
+    const begin = await connection.client.callTool({ name: "begin", arguments: {} });
+    const firstAppend = await connection.client.callTool({
+      name: "append",
+      arguments: {
+        elements: JSON.stringify([
+          { id: "saved-1", type: "rectangle", x: 0, y: 0 },
+        ]),
+      },
+    });
+    const secondAppend = await connection.client.callTool({
+      name: "append",
+      arguments: {
+        elements: JSON.stringify([
+          { id: "saved-2", type: "rectangle", x: 100, y: 0 },
+        ]),
+      },
+    });
+    const commit = await connection.client.callTool({ name: "commit", arguments: {} });
+
+    for (const result of [begin, firstAppend, secondAppend, commit]) {
+      expect(result).toMatchObject({ structuredContent: { previewDelivered: false } });
+    }
+    expect(bridge.readPreviews().map((preview) => preview.phase)).toEqual(["start"]);
+    expect(bridge.readSaveAttemptCount()).toBe(1);
     expect(bridge.readSaveCount()).toBe(1);
-    expect(bridge.readScene().elements[0]?.id).toBe("saved-despite-preview-error");
+    expect(bridge.readScene().elements.map((element) => element.id)).toEqual([
+      "saved-1",
+      "saved-2",
+    ]);
 
-    await client.close();
-    await mcpServer.close();
+    await connection.close();
+  });
+
+  it("bounds malformed operations, oversized input, invalid cameras, and missing checkpoints", async () => {
+    const bridge = await startBridge();
+    const connection = await connectClient(bridge.config);
+    await connection.client.callTool({ name: "begin", arguments: {} });
+
+    const malformed = await connection.client.callTool({
+      name: "append",
+      arguments: { elements: "not-json" },
+    });
+    const oversized = await connection.client.callTool({
+      name: "append",
+      arguments: { elements: "x".repeat(MAX_INPUT_BYTES + 1) },
+    });
+    const invalidCamera = await connection.client.callTool({
+      name: "append",
+      arguments: {
+        elements: JSON.stringify([
+          { type: "cameraUpdate", x: 0, y: 0, width: 0, height: 600 },
+        ]),
+      },
+    });
+    const missingCheckpoint = await connection.client.callTool({
+      name: "append",
+      arguments: {
+        elements: JSON.stringify([{ type: "restoreCheckpoint", id: "missing" }]),
+      },
+    });
+
+    for (const result of [malformed, oversized, invalidCamera, missingCheckpoint]) {
+      expect(result).toMatchObject({ isError: true });
+    }
+    expect(bridge.readSaveAttemptCount()).toBe(0);
+    expect(bridge.readPreviews().map((preview) => preview.phase)).toEqual(["start"]);
+
+    const validAppend = await connection.client.callTool({
+      name: "append",
+      arguments: {
+        elements: JSON.stringify([{ id: "valid", type: "rectangle", x: 0, y: 0 }]),
+      },
+    });
+    expect(validAppend.isError).not.toBe(true);
+    expect((await connection.client.callTool({ name: "commit", arguments: {} })).isError).not.toBe(
+      true,
+    );
+    expect(bridge.readSaveCount()).toBe(1);
+
+    await connection.close();
   });
 });

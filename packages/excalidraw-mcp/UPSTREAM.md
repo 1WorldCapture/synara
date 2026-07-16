@@ -8,11 +8,13 @@ This package is a Synara-focused fork/adaptation of
 - License: MIT (preserved in `LICENSE`)
 - Fork point verified: 2026-07-14
 
-Synara retains the upstream `read_me`, `create_view`, pseudo-element deletion,
-checkpoint, bounded-input, and stdio-server concepts. The MCP App iframe,
-public HTTP server, export proxy, and remote checkpoint stores are intentionally
-removed. This fork operates on one Drawing through a short-lived, thread-scoped
-Synara loopback capability and never receives a filesystem path.
+Synara retains the upstream pseudo-element deletion, checkpoint, bounded-input,
+and stdio-server concepts. The upstream `read_me` and one-shot `create_view`
+surfaces, MCP App iframe, public HTTP server, export proxy, and remote checkpoint
+stores are intentionally removed. This fork exposes only the incremental
+`read`, `begin`, `append`, `commit`, and `cancel` lifecycle. It operates on one
+Drawing through a short-lived, thread-scoped Synara loopback capability and
+never receives a filesystem path.
 
 The upstream iframe converted shorthand elements with
 `convertToExcalidrawElements`. Synara performs that same conversion in the
