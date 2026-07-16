@@ -187,7 +187,9 @@ function CanvasDockPaneContent(
   const liveSyncQueuedRef = useRef(false);
   const applyingRemoteSceneRef = useRef(false);
   const activePreviewCursorRef = useRef<CanvasPreviewCursor | null>(null);
-  const pendingPreviewRenderSceneRef = useRef<CanvasScene | null>(null);
+  const activePreviewTurnIdRef = useRef<TurnId | null>(null);
+  const abandonedPreviewTurnIdRef = useRef<TurnId | null>(null);
+  const pendingPreviewRenderScenesRef = useRef<CanvasScene[]>([]);
   const previewRenderFrameRef = useRef<number | null>(null);
   const cameraAnimationFrameRef = useRef<number | null>(null);
   const lastAgentCameraRef = useRef<CanvasAgentCamera | null>(null);
@@ -206,7 +208,11 @@ function CanvasDockPaneContent(
   const [followingAgent, setFollowingAgent] = useState(true);
   const [takingOver, setTakingOver] = useState(false);
   const reducedMotion = useMediaQuery("(prefers-reduced-motion: reduce)");
-  const canvasLocked = agentEditing || previewActive || finalSyncActive;
+  const activityFallbackEditing =
+    agentEditing && abandonedPreviewTurnIdRef.current !== thread?.latestTurn?.turnId;
+  const canvasLocked = activityFallbackEditing || previewActive || finalSyncActive;
+  const latestTurnRef = useRef(thread?.latestTurn ?? null);
+  latestTurnRef.current = thread?.latestTurn ?? null;
 
   const setAgentFollowing = useCallback((value: boolean) => {
     followingAgentRef.current = value;
@@ -321,12 +327,17 @@ function CanvasDockPaneContent(
         changed: next !== current,
       });
       if (next === current) return;
-      pendingPreviewRenderSceneRef.current = next;
+      pendingPreviewRenderScenesRef.current.push(next);
       previewRenderFrameRef.current ??= requestAnimationFrame(() => {
-        previewRenderFrameRef.current = null;
-        const pendingScene = pendingPreviewRenderSceneRef.current;
-        pendingPreviewRenderSceneRef.current = null;
-        if (pendingScene) applyPreviewScene(pendingScene);
+        const renderNext = () => {
+          previewRenderFrameRef.current = null;
+          const pendingScene = pendingPreviewRenderScenesRef.current.shift();
+          if (pendingScene) applyPreviewScene(pendingScene);
+          if (pendingPreviewRenderScenesRef.current.length > 0) {
+            previewRenderFrameRef.current = requestAnimationFrame(renderNext);
+          }
+        };
+        renderNext();
       });
     },
     [applyPreviewScene, props.threadId],
@@ -337,7 +348,7 @@ function CanvasDockPaneContent(
       cancelAnimationFrame(previewRenderFrameRef.current);
       previewRenderFrameRef.current = null;
     }
-    pendingPreviewRenderSceneRef.current = null;
+    pendingPreviewRenderScenesRef.current = [];
   }, []);
 
   const recordSnapshotMetadata = useCallback(
@@ -356,6 +367,7 @@ function CanvasDockPaneContent(
     ) => {
       cancelPreviewRender();
       activePreviewCursorRef.current = null;
+      activePreviewTurnIdRef.current = null;
       authoritativeSceneRef.current = displayScene;
       previewSceneRef.current = null;
       lastAgentCameraRef.current = null;
@@ -678,16 +690,36 @@ function CanvasDockPaneContent(
         previewSceneRef.current = authoritativeSceneRef.current;
         lastAgentCameraRef.current = null;
         setAgentFollowing(true);
+        const latestTurn = latestTurnRef.current;
+        const previewTurnId =
+          event.phase === "start" && latestTurn?.state === "running"
+            ? latestTurn.turnId
+            : null;
+        activePreviewTurnIdRef.current = previewTurnId;
+        if (previewTurnId) {
+          pendingFinalReloadTurnIdRef.current = previewTurnId;
+          if (abandonedPreviewTurnIdRef.current === previewTurnId) {
+            abandonedPreviewTurnIdRef.current = null;
+          }
+        }
       }
       applyPreviewOperations(event.operations);
       if (event.phase === "start" || event.phase === "partial") {
         setPreviewActive(true);
       } else {
+        const previewTurnId = activePreviewTurnIdRef.current;
         activePreviewCursorRef.current = null;
+        activePreviewTurnIdRef.current = null;
         setPreviewActive(false);
         previewSceneRef.current = null;
         lastAgentCameraRef.current = null;
         if (event.phase === "cancelled") {
+          if (previewTurnId) {
+            abandonedPreviewTurnIdRef.current = previewTurnId;
+            if (pendingFinalReloadTurnIdRef.current === previewTurnId) {
+              pendingFinalReloadTurnIdRef.current = null;
+            }
+          }
           cancelPreviewRender();
           cancelCameraAnimation();
           const authoritativeScene = authoritativeSceneRef.current;
@@ -720,10 +752,18 @@ function CanvasDockPaneContent(
     });
     cancelPreviewRender();
     cancelCameraAnimation();
+    const previewTurnId = activePreviewTurnIdRef.current;
     activePreviewCursorRef.current = null;
+    activePreviewTurnIdRef.current = null;
     previewSceneRef.current = null;
     lastAgentCameraRef.current = null;
     setPreviewActive(false);
+    if (previewTurnId) {
+      abandonedPreviewTurnIdRef.current = previewTurnId;
+      if (pendingFinalReloadTurnIdRef.current === previewTurnId) {
+        pendingFinalReloadTurnIdRef.current = null;
+      }
+    }
     const authoritativeScene = authoritativeSceneRef.current;
     if (authoritativeScene) applyPreviewScene(authoritativeScene);
   }, [
@@ -739,15 +779,24 @@ function CanvasDockPaneContent(
     const latestTurn = thread?.latestTurn ?? null;
     if (!latestTurn) return;
     if (latestTurn.state === "running") {
+      if (abandonedPreviewTurnIdRef.current === latestTurn.turnId) {
+        if (pendingFinalReloadTurnIdRef.current === latestTurn.turnId) {
+          pendingFinalReloadTurnIdRef.current = null;
+        }
+        return;
+      }
       if (agentEditing || previewActive) {
         pendingFinalReloadTurnIdRef.current = latestTurn.turnId;
       }
       return;
     }
     const finalSyncTurnId =
-      pendingFinalReloadTurnIdRef.current === latestTurn.turnId
+      pendingFinalReloadTurnIdRef.current === latestTurn.turnId &&
+      abandonedPreviewTurnIdRef.current !== latestTurn.turnId
         ? latestTurn.turnId
-        : mutationTurnId;
+        : mutationTurnId === abandonedPreviewTurnIdRef.current
+          ? null
+          : mutationTurnId;
     if (!finalSyncTurnId || lastSettledMutationTurnIdRef.current === finalSyncTurnId) return;
     if (finalSyncInFlightTurnIdRef.current === finalSyncTurnId) return;
     logCanvasDiagnostic("dock.final-sync-starting", {

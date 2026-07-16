@@ -305,6 +305,41 @@ describe("CanvasDockPane", () => {
 
   it("renders ephemeral preview batches and yields camera control", async () => {
     const snapshot = makeSnapshot();
+    const turnId = TurnId.makeUnsafe("cancelled-preview-turn");
+    const activityId = EventId.makeUnsafe("cancelled-preview-activity");
+    const latestTurn = {
+      turnId,
+      state: "running" as const,
+      requestedAt: NOW_ISO,
+      startedAt: NOW_ISO,
+      completedAt: null,
+      assistantMessageId: null,
+    };
+    useStore.setState((state) => ({
+      threadTurnStateById: {
+        ...state.threadTurnStateById,
+        [THREAD_ID]: { latestTurn },
+      },
+      activityIdsByThreadId: {
+        ...state.activityIdsByThreadId,
+        [THREAD_ID]: [activityId],
+      },
+      activityByThreadId: {
+        ...state.activityByThreadId,
+        [THREAD_ID]: {
+          [activityId]: {
+            id: activityId,
+            tone: "tool",
+            kind: "tool.started",
+            summary: "mcp__canvas__begin",
+            payload: { title: "MCP tool call", data: { toolName: "mcp__canvas__begin" } },
+            turnId,
+            createdAt: NOW_ISO,
+          },
+        },
+      },
+    }));
+    const readDrawing = vi.fn(async () => snapshot);
     const saveDrawing = vi.fn(async () => snapshot);
     const dispatchCommand = vi.fn(async () => ({ sequence: 2 }));
     let previewListener: Parameters<NativeApi["canvas"]["onAgentPreview"]>[0] | undefined;
@@ -314,6 +349,8 @@ describe("CanvasDockPane", () => {
         ...window.nativeApi,
         canvas: {
           ...window.nativeApi?.canvas,
+          createDrawing: readDrawing,
+          readDrawing,
           saveDrawing,
           onAgentPreview: (listener) => {
             previewListener = listener;
@@ -376,19 +413,29 @@ describe("CanvasDockPane", () => {
 
       await expect.element(page.getByText("AI is drawing")).toBeInTheDocument();
       await vi.waitFor(() =>
-        expect(updateSceneMock).toHaveBeenCalledWith({
-          elements: expect.arrayContaining([
-            expect.objectContaining({ id: "preview-box" }),
-            expect.objectContaining({ id: "preview-detail" }),
-          ]),
-          captureUpdate: "NEVER",
-        }),
+        expect(
+          updateSceneMock.mock.calls
+            .slice(callsBeforePreview)
+            .filter(([update]) => update?.captureUpdate === "NEVER" && update.elements),
+        ).toHaveLength(2),
       );
-      expect(
-        updateSceneMock.mock.calls
-          .slice(callsBeforePreview)
-          .filter(([update]) => update?.captureUpdate === "NEVER" && update.elements),
-      ).toHaveLength(1);
+      const previewRenderCalls = updateSceneMock.mock.calls
+        .slice(callsBeforePreview)
+        .filter(([update]) => update?.captureUpdate === "NEVER" && update.elements);
+      expect(previewRenderCalls[0]?.[0]).toEqual({
+        elements: expect.arrayContaining([expect.objectContaining({ id: "preview-box" })]),
+        captureUpdate: "NEVER",
+      });
+      expect(previewRenderCalls[0]?.[0]?.elements).not.toEqual(
+        expect.arrayContaining([expect.objectContaining({ id: "preview-detail" })]),
+      );
+      expect(previewRenderCalls[1]?.[0]).toEqual({
+        elements: expect.arrayContaining([
+          expect.objectContaining({ id: "preview-box" }),
+          expect.objectContaining({ id: "preview-detail" }),
+        ]),
+        captureUpdate: "NEVER",
+      });
       expect(saveDrawing).not.toHaveBeenCalled();
 
       document.querySelector('[data-testid="excalidraw-canvas"]')?.dispatchEvent(
@@ -414,6 +461,26 @@ describe("CanvasDockPane", () => {
       await expect
         .element(page.getByText("AI is drawing"))
         .not.toBeInTheDocument();
+      expect(updateSceneMock).toHaveBeenLastCalledWith({
+        elements: [],
+        captureUpdate: "NEVER",
+      });
+
+      useStore.setState((state) => ({
+        threadTurnStateById: {
+          ...state.threadTurnStateById,
+          [THREAD_ID]: {
+            latestTurn: {
+              ...latestTurn,
+              state: "completed",
+              completedAt: "2026-07-14T00:00:01.000Z",
+            },
+          },
+        },
+      }));
+      await new Promise((resolve) => setTimeout(resolve, 750));
+      expect(readDrawing).toHaveBeenCalledOnce();
+      expect(saveDrawing).not.toHaveBeenCalled();
     } finally {
       await screen.unmount();
     }
@@ -421,7 +488,6 @@ describe("CanvasDockPane", () => {
 
   it("keeps preview batches active across a non-streaming interim assistant message", async () => {
     const turnId = TurnId.makeUnsafe("canvas-interim-commentary-turn");
-    const activityId = EventId.makeUnsafe("canvas-preview-tool-started");
     const session = {
       provider: "grok" as const,
       status: "running" as const,
@@ -449,24 +515,6 @@ describe("CanvasDockPane", () => {
       threadTurnStateById: {
         ...state.threadTurnStateById,
         [THREAD_ID]: { latestTurn },
-      },
-      activityIdsByThreadId: {
-        ...state.activityIdsByThreadId,
-        [THREAD_ID]: [activityId],
-      },
-      activityByThreadId: {
-        ...state.activityByThreadId,
-        [THREAD_ID]: {
-          [activityId]: {
-            id: activityId,
-            tone: "tool",
-            kind: "tool.started",
-            summary: "begin_view started",
-            payload: { title: "begin_view" },
-            turnId,
-            createdAt: NOW_ISO,
-          },
-        },
       },
     }));
 
@@ -574,6 +622,204 @@ describe("CanvasDockPane", () => {
       );
       await expect.element(page.getByText("AI is drawing")).toBeInTheDocument();
       expect(readDrawing).toHaveBeenCalledOnce();
+    } finally {
+      await screen.unmount();
+    }
+  });
+
+  it("binds a preview-only stream to its running turn for settled final sync", async () => {
+    const turnId = TurnId.makeUnsafe("preview-only-turn");
+    const latestTurn = {
+      turnId,
+      state: "running" as const,
+      requestedAt: NOW_ISO,
+      startedAt: NOW_ISO,
+      completedAt: null,
+      assistantMessageId: null,
+    };
+    useStore.setState((state) => ({
+      threadTurnStateById: {
+        ...state.threadTurnStateById,
+        [THREAD_ID]: { latestTurn },
+      },
+    }));
+
+    let snapshot = makeSnapshot();
+    const readDrawing = vi.fn(async () => snapshot);
+    const saveDrawing = vi.fn(async () => snapshot);
+    let previewListener: Parameters<NativeApi["canvas"]["onAgentPreview"]>[0] | undefined;
+    Object.defineProperty(window, "nativeApi", {
+      configurable: true,
+      value: {
+        ...window.nativeApi,
+        canvas: {
+          ...window.nativeApi?.canvas,
+          createDrawing: readDrawing,
+          readDrawing,
+          saveDrawing,
+          onAgentPreview: (listener) => {
+            previewListener = listener;
+            return () => {
+              previewListener = undefined;
+            };
+          },
+        },
+      } as NativeApi,
+    });
+
+    const screen = await renderWithQueryClient(
+      <div style={{ width: "1440px", height: "900px" }}>
+        <CanvasDockPane threadId={THREAD_ID} />
+      </div>,
+    );
+
+    try {
+      await expect.element(page.getByText("Saved locally")).toBeInTheDocument();
+      expect(readDrawing).toHaveBeenCalledOnce();
+      expect(previewListener).toBeDefined();
+
+      previewListener?.({
+        threadId: THREAD_ID,
+        streamId: "preview-only-stream",
+        sequence: 0,
+        phase: "start",
+        baseRevision: "revision-1",
+        operations: [],
+      });
+      previewListener?.({
+        threadId: THREAD_ID,
+        streamId: "preview-only-stream",
+        sequence: 1,
+        phase: "complete",
+        baseRevision: "revision-1",
+        operations: [],
+      });
+      snapshot = { ...snapshot, revision: "revision-2" };
+      useStore.setState((state) => ({
+        threadTurnStateById: {
+          ...state.threadTurnStateById,
+          [THREAD_ID]: {
+            latestTurn: {
+              ...latestTurn,
+              state: "completed",
+              completedAt: "2026-07-14T00:00:01.000Z",
+            },
+          },
+        },
+      }));
+
+      await vi.waitFor(() => expect(readDrawing.mock.calls.length).toBeGreaterThan(1), {
+        timeout: 2_500,
+      });
+      expect(saveDrawing).not.toHaveBeenCalled();
+    } finally {
+      await screen.unmount();
+    }
+  });
+
+  it("rolls back an unterminated preview when its owning turn settles", async () => {
+    const turnId = TurnId.makeUnsafe("abandoned-preview-turn");
+    const latestTurn = {
+      turnId,
+      state: "running" as const,
+      requestedAt: NOW_ISO,
+      startedAt: NOW_ISO,
+      completedAt: null,
+      assistantMessageId: null,
+    };
+    useStore.setState((state) => ({
+      threadTurnStateById: {
+        ...state.threadTurnStateById,
+        [THREAD_ID]: { latestTurn },
+      },
+    }));
+
+    const snapshot: CanvasDrawingSnapshot = {
+      ...makeSnapshot(),
+      scene: {
+        ...EMPTY_CANVAS_SCENE,
+        elements: [{ id: "authoritative", type: "rectangle", version: 1 }],
+      },
+    };
+    const readDrawing = vi.fn(async () => snapshot);
+    const saveDrawing = vi.fn(async () => snapshot);
+    let previewListener: Parameters<NativeApi["canvas"]["onAgentPreview"]>[0] | undefined;
+    Object.defineProperty(window, "nativeApi", {
+      configurable: true,
+      value: {
+        ...window.nativeApi,
+        canvas: {
+          ...window.nativeApi?.canvas,
+          createDrawing: readDrawing,
+          readDrawing,
+          saveDrawing,
+          onAgentPreview: (listener) => {
+            previewListener = listener;
+            return () => {
+              previewListener = undefined;
+            };
+          },
+        },
+      } as NativeApi,
+    });
+
+    const screen = await renderWithQueryClient(
+      <div style={{ width: "1440px", height: "900px" }}>
+        <CanvasDockPane threadId={THREAD_ID} />
+      </div>,
+    );
+
+    try {
+      await expect.element(page.getByText("Saved locally")).toBeInTheDocument();
+      previewListener?.({
+        threadId: THREAD_ID,
+        streamId: "abandoned-preview-stream",
+        sequence: 0,
+        phase: "start",
+        baseRevision: "revision-1",
+        operations: [],
+      });
+      previewListener?.({
+        threadId: THREAD_ID,
+        streamId: "abandoned-preview-stream",
+        sequence: 1,
+        phase: "partial",
+        baseRevision: "revision-1",
+        operations: [
+          { id: "preview-only", type: "ellipse", x: 80, y: 80, width: 120, height: 80 },
+        ],
+      });
+      await expect.element(page.getByText("AI is drawing")).toBeInTheDocument();
+      await vi.waitFor(() =>
+        expect(updateSceneMock).toHaveBeenCalledWith({
+          elements: expect.arrayContaining([expect.objectContaining({ id: "preview-only" })]),
+          captureUpdate: "NEVER",
+        }),
+      );
+
+      useStore.setState((state) => ({
+        threadTurnStateById: {
+          ...state.threadTurnStateById,
+          [THREAD_ID]: {
+            latestTurn: {
+              ...latestTurn,
+              state: "interrupted",
+              completedAt: "2026-07-14T00:00:01.000Z",
+            },
+          },
+        },
+      }));
+
+      await expect.element(page.getByText("AI is drawing")).not.toBeInTheDocument();
+      await vi.waitFor(() =>
+        expect(updateSceneMock).toHaveBeenLastCalledWith({
+          elements: expect.arrayContaining([expect.objectContaining({ id: "authoritative" })]),
+          captureUpdate: "NEVER",
+        }),
+      );
+      await new Promise((resolve) => setTimeout(resolve, 750));
+      expect(readDrawing).toHaveBeenCalledOnce();
+      expect(saveDrawing).not.toHaveBeenCalled();
     } finally {
       await screen.unmount();
     }
@@ -778,8 +1024,8 @@ describe("CanvasDockPane", () => {
               id: activityId,
               tone: "tool",
               kind: "tool.started",
-              summary: "create_view started",
-              payload: { title: "create_view" },
+              summary: "mcp__canvas__begin",
+              payload: { title: "MCP tool call", data: { toolName: "mcp__canvas__begin" } },
               turnId,
               createdAt: NOW_ISO,
             },
@@ -886,8 +1132,8 @@ describe("CanvasDockPane", () => {
               id: reconnectActivityId,
               tone: "tool",
               kind: "tool.completed",
-              summary: "create_view completed",
-              payload: { title: "create_view" },
+              summary: "mcp__canvas__commit",
+              payload: { title: "MCP tool call", data: { toolName: "mcp__canvas__commit" } },
               turnId: reconnectTurnId,
               createdAt: NOW_ISO,
             },
