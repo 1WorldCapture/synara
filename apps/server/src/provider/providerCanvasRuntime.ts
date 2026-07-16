@@ -3,10 +3,11 @@
 // Layer: Provider runtime utilities
 
 import type { ProviderCanvasRuntime } from "@synara/contracts";
+import { CANVAS_MCP_NAMESPACE } from "@synara/shared/canvasAgentContract";
 import type * as EffectAcpSchema from "effect-acp/schema";
 
-export const CANVAS_MCP_SERVER_NAME = "synara-excalidraw";
-
+// Provider sessions snapshot this configuration at startup. Applying a contract
+// change requires recreating the session; active sessions are never mutated.
 export function canvasMcpEnvironment(canvas: ProviderCanvasRuntime): Record<string, string> {
   return {
     SYNARA_CANVAS_BRIDGE_URL: canvas.bridgeUrl,
@@ -20,7 +21,7 @@ export function canvasAcpMcpServers(
 ): ReadonlyArray<EffectAcpSchema.McpServer> {
   return [
     {
-      name: CANVAS_MCP_SERVER_NAME,
+      name: CANVAS_MCP_NAMESPACE,
       command: canvas.mcpCommand,
       args: [...canvas.mcpArgs],
       env: Object.entries(canvasMcpEnvironment(canvas)).map(([name, value]) => ({ name, value })),

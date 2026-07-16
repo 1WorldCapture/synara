@@ -8,7 +8,7 @@ describe("redactAcpLogPayload", () => {
       redactAcpLogPayload({
         mcpServers: [
           {
-            name: "synara-excalidraw",
+            name: "canvas",
             env: [
               { name: "SYNARA_CANVAS_BRIDGE_TOKEN", value: "bridge-secret" },
               { name: "SYNARA_CANVAS_THREAD_ID", value: "drawing-1" },
@@ -20,7 +20,7 @@ describe("redactAcpLogPayload", () => {
     ).toEqual({
       mcpServers: [
         {
-          name: "synara-excalidraw",
+          name: "canvas",
           env: [
             { name: "SYNARA_CANVAS_BRIDGE_TOKEN", value: "[REDACTED]" },
             { name: "SYNARA_CANVAS_THREAD_ID", value: "drawing-1" },

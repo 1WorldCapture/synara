@@ -7,6 +7,7 @@ import {
   ApprovalRequestId,
   EventId,
   type ProviderComposerCapabilities,
+  type ProviderCanvasRuntime,
   ProviderItemId,
   type ProviderListModelsResult,
   type ProviderListPluginsResult,
@@ -37,6 +38,7 @@ import {
   type ServerVoiceTranscriptionInput,
   type ServerVoiceTranscriptionResult,
 } from "@synara/contracts";
+import { CANVAS_MCP_NAMESPACE } from "@synara/shared/canvasAgentContract";
 import { getModelSelectionBooleanOptionValue, normalizeModelSlug } from "@synara/shared/model";
 import { decodeSubagentReceiverThreadIds } from "@synara/shared/subagents";
 import { prepareWindowsSafeProcess } from "@synara/shared/windowsProcess";
@@ -61,10 +63,7 @@ import {
   CodexJsonlFramer,
   CodexJsonlWriter,
 } from "./codexAppServerTransport.ts";
-import {
-  CANVAS_MCP_SERVER_NAME,
-  canvasMcpEnvironment,
-} from "./provider/providerCanvasRuntime.ts";
+import { canvasMcpEnvironment } from "./provider/providerCanvasRuntime.ts";
 import {
   builtinSkillsRoot,
   materializeBuiltinCanvasSkill,
@@ -619,6 +618,16 @@ export function buildCodexInitializeParams() {
   } as const;
 }
 
+export function buildCodexCanvasMcpServers(canvas: ProviderCanvasRuntime) {
+  return {
+    [CANVAS_MCP_NAMESPACE]: {
+      command: canvas.mcpCommand,
+      args: [...canvas.mcpArgs],
+      env: canvasMcpEnvironment(canvas),
+    },
+  };
+}
+
 function buildCodexCollaborationMode(input: {
   readonly interactionMode?: "default" | "plan";
   readonly model?: string;
@@ -912,13 +921,7 @@ export class CodexAppServerManager extends EventEmitter<CodexAppServerManagerEve
         ...(input.canvas
           ? {
               config: {
-                mcp_servers: {
-                  [CANVAS_MCP_SERVER_NAME]: {
-                    command: input.canvas.mcpCommand,
-                    args: [...input.canvas.mcpArgs],
-                    env: canvasMcpEnvironment(input.canvas),
-                  },
-                },
+                mcp_servers: buildCodexCanvasMcpServers(input.canvas),
               },
             }
           : {}),

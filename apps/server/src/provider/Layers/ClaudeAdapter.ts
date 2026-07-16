@@ -58,6 +58,8 @@ import {
   type ProviderListModelsResult,
   getAgentMentionAliases,
 } from "@synara/contracts";
+import { buildClaudeSubagentPrompt } from "@synara/shared/agentMentions";
+import { CANVAS_MCP_NAMESPACE } from "@synara/shared/canvasAgentContract";
 import {
   applyClaudePromptEffortPrefix,
   getDefaultAutoCompactWindow,
@@ -111,10 +113,7 @@ import {
   type ProviderAdapterError,
 } from "../Errors.ts";
 import { extractProposedPlanMarkdown, withProviderPlanModePrompt } from "../planMode.ts";
-import {
-  CANVAS_MCP_SERVER_NAME,
-  canvasStdioMcpServer,
-} from "../providerCanvasRuntime.ts";
+import { canvasStdioMcpServer } from "../providerCanvasRuntime.ts";
 import { ClaudeAdapter, type ClaudeAdapterShape } from "../Services/ClaudeAdapter.ts";
 import { type EventNdjsonLogger, makeEventNdjsonLogger } from "./EventNdjsonLogger.ts";
 import {
@@ -3785,7 +3784,7 @@ function makeClaudeAdapter(options?: ClaudeAdapterLiveOptions) {
           ...(input.canvas
             ? {
                 mcpServers: {
-                  [CANVAS_MCP_SERVER_NAME]: canvasStdioMcpServer(input.canvas),
+                  [CANVAS_MCP_NAMESPACE]: canvasStdioMcpServer(input.canvas),
                 },
               }
             : {}),

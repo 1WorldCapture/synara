@@ -27,7 +27,7 @@ describe("AcpSessionRuntime", () => {
     const requestEvents: Array<AcpSessionRequestLogEvent> = [];
     const mcpServers = [
       {
-        name: "synara-excalidraw",
+        name: "canvas",
         command: "node",
         args: ["mcp.mjs"],
         env: [{ name: "TOKEN", value: "secret" }],
@@ -104,7 +104,7 @@ describe("AcpSessionRuntime", () => {
     const requestEvents: Array<AcpSessionRequestLogEvent> = [];
     const mcpServers = [
       {
-        name: "synara-excalidraw",
+        name: "canvas",
         command: "node",
         args: ["mcp.mjs"],
         env: [{ name: "TOKEN", value: "secret" }],

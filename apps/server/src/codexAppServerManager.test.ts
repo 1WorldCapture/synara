@@ -21,6 +21,7 @@ import {
   resolveCodexBrowserUsePipePath,
 } from "./codexProcessEnv";
 import {
+  buildCodexCanvasMcpServers,
   buildCodexInitializeParams,
   CODEX_DEFAULT_MODE_DEVELOPER_INSTRUCTIONS,
   CODEX_PLAN_MODE_DEVELOPER_INSTRUCTIONS,
@@ -906,6 +907,29 @@ describe("resolveCodexModelForAccount", () => {
 });
 
 describe("startSession", () => {
+  it("configures only the shared canvas MCP namespace", () => {
+    const mcpServers = buildCodexCanvasMcpServers({
+      bridgeUrl: "http://127.0.0.1:43100",
+      bridgeToken: "bridge-token",
+      threadId: asThreadId("thread-canvas-runtime"),
+      mcpCommand: "/opt/synara/canvas-mcp",
+      mcpArgs: ["--stdio"],
+    });
+
+    expect(mcpServers).toEqual({
+      canvas: {
+        command: "/opt/synara/canvas-mcp",
+        args: ["--stdio"],
+        env: {
+          SYNARA_CANVAS_BRIDGE_URL: "http://127.0.0.1:43100",
+          SYNARA_CANVAS_BRIDGE_TOKEN: "bridge-token",
+          SYNARA_CANVAS_THREAD_ID: "thread-canvas-runtime",
+        },
+      },
+    });
+    expect(mcpServers).not.toHaveProperty("synara-excalidraw");
+  });
+
   it("materializes Canvas before registering deterministic personal and built-in roots", async () => {
     const baseDir = mkdtempSync(path.join(os.tmpdir(), "synara-codex-skills-"));
     const personalRoot = path.join(baseDir, "skills");

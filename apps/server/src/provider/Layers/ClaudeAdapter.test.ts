@@ -356,6 +356,43 @@ describe("ClaudeAdapterLive", () => {
     );
   });
 
+  it.effect("starts Canvas MCP under only the shared canvas namespace", () => {
+    const harness = makeHarness();
+    return Effect.gen(function* () {
+      const adapter = yield* ClaudeAdapter;
+      yield* adapter.startSession({
+        threadId: THREAD_ID,
+        provider: "claudeAgent",
+        runtimeMode: "full-access",
+        canvas: {
+          bridgeUrl: "http://127.0.0.1:43100",
+          bridgeToken: "bridge-token",
+          threadId: THREAD_ID,
+          mcpCommand: "/opt/synara/canvas-mcp",
+          mcpArgs: ["--stdio"],
+        },
+      });
+
+      const mcpServers = harness.getLastCreateQueryInput()?.options.mcpServers;
+      assert.deepEqual(mcpServers, {
+        canvas: {
+          type: "stdio",
+          command: "/opt/synara/canvas-mcp",
+          args: ["--stdio"],
+          env: {
+            SYNARA_CANVAS_BRIDGE_URL: "http://127.0.0.1:43100",
+            SYNARA_CANVAS_BRIDGE_TOKEN: "bridge-token",
+            SYNARA_CANVAS_THREAD_ID: THREAD_ID,
+          },
+        },
+      });
+      assert.equal(Object.hasOwn(mcpServers ?? {}, "synara-excalidraw"), false);
+    }).pipe(
+      Effect.provideService(Random.Random, makeDeterministicRandomService()),
+      Effect.provide(harness.layer),
+    );
+  });
+
   it.effect("loads Claude filesystem settings sources for SDK sessions", () => {
     const harness = makeHarness();
     return Effect.gen(function* () {
