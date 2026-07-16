@@ -76,6 +76,7 @@ import {
 } from "../../provider/Errors.ts";
 import { materializeBuiltinCanvasSkill } from "../../provider/builtinCanvasSkill.ts";
 import { buildInlineSkillInstructions } from "../../provider/skillPromptInjection.ts";
+import { skillNameKey } from "../../provider/skillsCatalog.ts";
 import {
   TextGeneration,
   type BranchNameGenerationInput,
@@ -194,10 +195,6 @@ export function normalizeSkillMentionTextForProvider(input: {
   return nextText;
 }
 
-function normalizedSkillName(name: string): string {
-  return name.trim().toLowerCase();
-}
-
 export async function canonicalizeCanvasSkillReferences(input: {
   readonly provider: ProviderKind;
   readonly skills: ReadonlyArray<ProviderSkillReference>;
@@ -209,14 +206,14 @@ export async function canonicalizeCanvasSkillReferences(input: {
   readonly managedCanvasPath?: string;
 }> {
   const hasCanvas = input.skills.some(
-    (skill) => normalizedSkillName(skill.name) === CANVAS_SKILL_NAME,
+    (skill) => skillNameKey(skill.name) === CANVAS_SKILL_NAME,
   );
   if (!hasCanvas || !isCanvasProviderSupported(input.provider)) {
     return { skills: [...input.skills] };
   }
   if (
     input.disabledSkillNames.some(
-      (name) => normalizedSkillName(name) === CANVAS_SKILL_NAME,
+      (name) => skillNameKey(name) === CANVAS_SKILL_NAME,
     )
   ) {
     throw new Error("The built-in Canvas Skill is disabled in Settings.");
@@ -234,7 +231,7 @@ export async function canonicalizeCanvasSkillReferences(input: {
   let emittedCanvas = false;
   const skills: ProviderSkillReference[] = [];
   for (const skill of input.skills) {
-    if (normalizedSkillName(skill.name) !== CANVAS_SKILL_NAME) {
+    if (skillNameKey(skill.name) !== CANVAS_SKILL_NAME) {
       skills.push(skill);
       continue;
     }
@@ -1182,7 +1179,7 @@ const make = Effect.gen(function* () {
       thread.modelSelection.provider;
     const hasSupportedCanvasSelection =
       input.skills?.some(
-        (skill) => normalizedSkillName(skill.name) === CANVAS_SKILL_NAME,
+        (skill) => skillNameKey(skill.name) === CANVAS_SKILL_NAME,
       ) === true && isCanvasProviderSupported(selectedProvider as ProviderKind);
     const canonicalSkillResolution = hasSupportedCanvasSelection
       ? yield* serverSettings.getSettings.pipe(
@@ -1316,8 +1313,7 @@ const make = Effect.gen(function* () {
               skills: canonicalSkills,
               ...(managedCanvasPath
                 ? {
-                    managedSkillPaths: [managedCanvasPath],
-                    requiredSkillPaths: [managedCanvasPath],
+                    requiredManagedSkillPaths: [managedCanvasPath],
                   }
                 : {}),
               maxChars: Math.max(

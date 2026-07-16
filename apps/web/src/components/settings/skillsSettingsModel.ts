@@ -5,6 +5,7 @@
 
 import type { ProviderKind, ProviderSkillDescriptor } from "@synara/contracts";
 import { PROVIDER_DISPLAY_NAMES } from "@synara/contracts";
+import { SYNARA_BUILTIN_SKILL_SCOPE } from "@synara/shared/canvasAgentContract";
 import { DEFAULT_PROVIDER_ORDER } from "~/providerOrdering";
 
 export interface SkillOriginInfo {
@@ -37,7 +38,7 @@ export interface SettingsSkillSection {
 const SHARED_SKILLS_SECTION = "shared";
 const PERSONAL_ORIGIN = "personal";
 export const ORIGIN_SECTION_ORDER = [
-  "synara-builtin",
+  SYNARA_BUILTIN_SKILL_SCOPE,
   "synara",
   "codex",
   "claude",
@@ -53,7 +54,7 @@ export const ORIGIN_SECTION_ORDER = [
 ] as const;
 export function skillOriginInfo(scope: string | undefined): SkillOriginInfo {
   switch (scope) {
-    case "synara-builtin":
+    case SYNARA_BUILTIN_SKILL_SCOPE:
       return { label: "Built into Synara", provider: null };
     case "synara":
       return { label: "Synara", provider: null };

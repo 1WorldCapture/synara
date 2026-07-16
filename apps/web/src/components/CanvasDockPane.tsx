@@ -28,7 +28,7 @@ import { FiCrosshair, FiTrash2, FiX } from "react-icons/fi";
 
 import { useMediaQuery } from "~/hooks/useMediaQuery";
 import { useTheme } from "~/hooks/useTheme";
-import { canvasAgentMutationTurnId, isCanvasAgentEditing } from "~/lib/canvasAgentState";
+import { canvasAgentMutationTurnId } from "~/lib/canvasAgentState";
 import { registerCanvasSaveBarrier } from "~/lib/canvasSaveCoordinator";
 import {
   canvasCameraAnimationStep,
@@ -165,14 +165,15 @@ function CanvasDockPaneContent(
   const thread = useStore(
     useMemo(() => createThreadSelector(props.threadId), [props.threadId]),
   );
-  const agentEditing = isCanvasAgentEditing({
-    latestTurn: thread?.latestTurn ?? null,
-    activities: thread?.activities ?? [],
-  });
-  const mutationTurnId = canvasAgentMutationTurnId({
-    latestTurn: thread?.latestTurn ?? null,
-    activities: thread?.activities ?? [],
-  });
+  const mutationTurnId = useMemo(
+    () =>
+      canvasAgentMutationTurnId({
+        latestTurn: thread?.latestTurn ?? null,
+        activities: thread?.activities ?? [],
+      }),
+    [thread?.activities, thread?.latestTurn],
+  );
+  const agentEditing = thread?.latestTurn?.state === "running" && mutationTurnId !== null;
   const excalidrawApiRef = useRef<ExcalidrawImperativeAPI | null>(null);
   const canvasContainerRef = useRef<HTMLDivElement | null>(null);
   const revisionRef = useRef<string | null>(null);

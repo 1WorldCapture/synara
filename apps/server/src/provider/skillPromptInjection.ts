@@ -36,19 +36,21 @@ function normalizedPathKey(filePath: string): string {
 
 function isManagedSkillPath(
   skillPath: string,
-  managedSkillPaths: ReadonlyArray<string> | undefined,
+  requiredManagedSkillPaths: ReadonlyArray<string> | undefined,
 ): boolean {
-  if (!managedSkillPaths || managedSkillPaths.length === 0) return false;
+  if (!requiredManagedSkillPaths || requiredManagedSkillPaths.length === 0) return false;
   const key = normalizedPathKey(skillPath);
-  return managedSkillPaths.some((managedPath) => normalizedPathKey(managedPath) === key);
+  return requiredManagedSkillPaths.some(
+    (managedPath) => normalizedPathKey(managedPath) === key,
+  );
 }
 
 export function shouldInlineSkillForProvider(
   provider: ProviderKind,
   skillPath: string,
-  options?: { readonly managedSkillPaths?: ReadonlyArray<string> },
+  options?: { readonly requiredManagedSkillPaths?: ReadonlyArray<string> },
 ): boolean {
-  if (isManagedSkillPath(skillPath, options?.managedSkillPaths)) {
+  if (isManagedSkillPath(skillPath, options?.requiredManagedSkillPaths)) {
     return provider !== "codex";
   }
   const segments = pathSegments(skillPath);
@@ -82,14 +84,13 @@ export async function buildInlineSkillInstructions(input: {
   readonly provider: ProviderKind;
   readonly skills: ReadonlyArray<ProviderSkillReference>;
   readonly maxChars: number;
-  readonly managedSkillPaths?: ReadonlyArray<string>;
-  readonly requiredSkillPaths?: ReadonlyArray<string>;
+  readonly requiredManagedSkillPaths?: ReadonlyArray<string>;
 }): Promise<string> {
   const seen = new Set<string>();
   const inlineSkills = input.skills.filter((skill) => {
     if (
       !shouldInlineSkillForProvider(input.provider, skill.path, {
-        managedSkillPaths: input.managedSkillPaths,
+        requiredManagedSkillPaths: input.requiredManagedSkillPaths,
       })
     ) {
       return false;
@@ -104,7 +105,7 @@ export async function buildInlineSkillInstructions(input: {
   }
 
   const requiredPaths = new Set(
-    (input.requiredSkillPaths ?? []).map((filePath) => normalizedPathKey(filePath)),
+    (input.requiredManagedSkillPaths ?? []).map((filePath) => normalizedPathKey(filePath)),
   );
   const requiredInlineSkill = inlineSkills.find((skill) =>
     requiredPaths.has(normalizedPathKey(skill.path)),

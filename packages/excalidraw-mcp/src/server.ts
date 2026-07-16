@@ -8,6 +8,7 @@ import {
 } from "@synara/shared/canvasAgentContract";
 import { z } from "zod";
 
+import packageJson from "../package.json" with { type: "json" };
 import {
   publishPreview,
   readBridgeConfig,
@@ -20,7 +21,7 @@ import {
 import { applyElementOperations } from "./scene";
 
 const MAX_INPUT_BYTES = 5 * 1024 * 1024;
-const MCP_VERSION = "0.4.0-synara.1";
+const MCP_VERSION = packageJson.version;
 const [READ_TOOL_NAME, BEGIN_TOOL_NAME, APPEND_TOOL_NAME, COMMIT_TOOL_NAME, CANCEL_TOOL_NAME] =
   CANVAS_TOOL_NAMES;
 

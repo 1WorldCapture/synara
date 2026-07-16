@@ -5,9 +5,7 @@
 import { existsSync } from "node:fs";
 import path from "node:path";
 
-import {
-  CANVAS_SKILL_ASSET_RELATIVE_PATH,
-} from "../../packages/excalidraw-mcp/scripts/copySkillAssets.ts";
+import { CANVAS_SKILL_ASSET_RELATIVE_PATH } from "@synara/shared/canvasAgentContract";
 
 export const CANVAS_MCP_REQUIRED_DIST_ASSETS = [
   "main.mjs",

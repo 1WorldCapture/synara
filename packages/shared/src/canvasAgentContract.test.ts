@@ -4,6 +4,7 @@ import {
   CANVAS_MCP_NAMESPACE,
   CANVAS_MCP_DISPLAY_NAME,
   CANVAS_MUTATION_TOOL_NAMES,
+  CANVAS_SKILL_ASSET_RELATIVE_PATH,
   CANVAS_SKILL_NAME,
   CANVAS_TOOL_NAMES,
   isCanvasMutationToolName,
@@ -13,6 +14,7 @@ import {
 describe("Canvas Agent contract", () => {
   it("defines the stable built-in Skill and MCP identities", () => {
     expect(CANVAS_SKILL_NAME).toBe("canvas");
+    expect(CANVAS_SKILL_ASSET_RELATIVE_PATH).toBe("skills/canvas/SKILL.md");
     expect(CANVAS_MCP_NAMESPACE).toBe("canvas");
     expect(CANVAS_MCP_DISPLAY_NAME).toBe("Synara Canvas");
     expect(CANVAS_TOOL_NAMES).toEqual([

@@ -6,7 +6,7 @@ import { copyFile, mkdir } from "node:fs/promises";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 
-export const CANVAS_SKILL_ASSET_RELATIVE_PATH = "skills/canvas/SKILL.md";
+import { CANVAS_SKILL_ASSET_RELATIVE_PATH } from "@synara/shared/canvasAgentContract";
 
 export async function copySkillAssets(input: {
   readonly packageRoot?: string;

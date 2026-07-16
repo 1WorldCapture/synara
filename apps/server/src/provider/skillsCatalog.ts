@@ -664,15 +664,7 @@ export function mergeSkillsIntoCatalog(input: {
   readonly native: ReadonlyArray<ProviderSkillDescriptor>;
   readonly catalog: ReadonlyArray<ProviderSkillDescriptor>;
 }): ProviderSkillDescriptor[] {
-  const byName = new Map<string, ProviderSkillDescriptor>();
-  for (const skill of [...input.native, ...input.catalog]) {
-    const key = skillNameKey(skill.name);
-    const existing = byName.get(key);
-    if (!existing || managedCanvasWins(existing, skill)) {
-      byName.set(key, skill);
-    }
-  }
-  return [...byName.values()];
+  return dedupeSkillsWithReservedBuiltinCanvas([...input.native, ...input.catalog]);
 }
 
 export function filterDisabledSkills(

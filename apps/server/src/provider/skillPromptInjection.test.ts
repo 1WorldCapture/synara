@@ -58,7 +58,7 @@ describe("shouldInlineSkillForProvider", () => {
 
   it("treats an explicitly managed Canvas path as native only for Codex", () => {
     const customBaseManagedPath = "/Volumes/custom-state/builtin-skills/canvas/SKILL.md";
-    const options = { managedSkillPaths: [customBaseManagedPath] };
+    const options = { requiredManagedSkillPaths: [customBaseManagedPath] };
 
     expect(shouldInlineSkillForProvider("codex", customBaseManagedPath, options)).toBe(false);
     for (const provider of ["claudeAgent", "cursor", "gemini", "grok", "droid"] as const) {
@@ -135,8 +135,7 @@ describe("buildInlineSkillInstructions", () => {
           { name: "canvas", path: skillPath },
           { name: "canvas", path: skillPath },
         ],
-        managedSkillPaths: [skillPath],
-        requiredSkillPaths: [skillPath],
+        requiredManagedSkillPaths: [skillPath],
         maxChars: 10_000,
       });
 
@@ -153,8 +152,7 @@ describe("buildInlineSkillInstructions", () => {
       buildInlineSkillInstructions({
         provider: "gemini",
         skills: [{ name: "canvas", path: missing }],
-        managedSkillPaths: [missing],
-        requiredSkillPaths: [missing],
+        requiredManagedSkillPaths: [missing],
         maxChars: 10_000,
       }),
     ).rejects.toThrow("Canvas");

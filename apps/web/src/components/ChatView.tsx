@@ -39,6 +39,7 @@ import {
   RuntimeMode,
 } from "@synara/contracts";
 import { getModelCapabilities, normalizeModelSlug } from "@synara/shared/model";
+import { CANVAS_SKILL_NAME } from "@synara/shared/canvasAgentContract";
 import { resolveTailUserMessageEditTarget } from "@synara/shared/conversationEdit";
 import { threadExportBlockedReason } from "@synara/shared/threadExport";
 import { buildTemporaryWorktreeBranchName } from "@synara/shared/git";
@@ -7280,7 +7281,7 @@ export default function ChatView({
         selectedSkills: selectedComposerSkillsForSend,
         catalogSkills,
       });
-      if (skillResolution.unavailableSkillNames.includes("canvas")) {
+      if (skillResolution.unavailableSkillNames.includes(CANVAS_SKILL_NAME)) {
         toastManager.add({
           type: "error",
           title: "Canvas Skill is unavailable",

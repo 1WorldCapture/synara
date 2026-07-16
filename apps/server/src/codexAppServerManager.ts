@@ -68,6 +68,7 @@ import {
   builtinSkillsRoot,
   materializeBuiltinCanvasSkill,
 } from "./provider/builtinCanvasSkill.ts";
+import { synaraSkillsDir } from "./provider/skillsCatalog.ts";
 
 const log = createLogger("codex");
 
@@ -765,20 +766,17 @@ export class CodexAppServerManager extends EventEmitter<CodexAppServerManagerEve
   private readonly modelCache = new Map<string, ProviderListModelsResult>();
 
   private runPromise: (effect: Effect.Effect<unknown, never>) => Promise<unknown>;
-  private readonly synaraSkillsDir: string | undefined;
   private readonly synaraBaseDir: string | undefined;
   private readonly teardownProcessTree: typeof teardownProviderProcessTree;
   constructor(
     services?: ServiceMap.ServiceMap<never>,
     options?: {
-      readonly synaraSkillsDir?: string;
       readonly synaraBaseDir?: string;
       readonly teardownProcessTree?: typeof teardownProviderProcessTree;
     },
   ) {
     super();
     this.runPromise = services ? Effect.runPromiseWith(services) : Effect.runPromise;
-    this.synaraSkillsDir = options?.synaraSkillsDir;
     this.synaraBaseDir = options?.synaraBaseDir;
     this.teardownProcessTree = options?.teardownProcessTree ?? teardownProviderProcessTree;
   }
@@ -788,10 +786,8 @@ export class CodexAppServerManager extends EventEmitter<CodexAppServerManagerEve
   // items outside known roots are silently ignored by codex app-server.
   private async registerSynaraSkillsRoots(context: CodexSessionContext): Promise<void> {
     const roots: string[] = [];
-    if (this.synaraSkillsDir) {
-      roots.push(this.synaraSkillsDir);
-    }
     if (this.synaraBaseDir) {
+      roots.push(synaraSkillsDir(this.synaraBaseDir));
       const managedPath = await materializeBuiltinCanvasSkill({ baseDir: this.synaraBaseDir });
       if (managedPath) {
         roots.push(builtinSkillsRoot(this.synaraBaseDir));
@@ -801,10 +797,13 @@ export class CodexAppServerManager extends EventEmitter<CodexAppServerManagerEve
         });
       }
     }
-    const extraRoots = roots.filter(
-      (root, index, all) =>
-        all.findIndex((candidate) => path.resolve(candidate) === path.resolve(root)) === index,
-    );
+    const seenRoots = new Set<string>();
+    const extraRoots = roots.filter((root) => {
+      const key = path.resolve(root);
+      if (seenRoots.has(key)) return false;
+      seenRoots.add(key);
+      return true;
+    });
     if (extraRoots.length === 0) {
       return;
     }

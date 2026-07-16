@@ -934,7 +934,6 @@ describe("startSession", () => {
     const baseDir = mkdtempSync(path.join(os.tmpdir(), "synara-codex-skills-"));
     const personalRoot = path.join(baseDir, "skills");
     const manager = new CodexAppServerManager(undefined, {
-      synaraSkillsDir: personalRoot,
       synaraBaseDir: baseDir,
     });
     const context = {};

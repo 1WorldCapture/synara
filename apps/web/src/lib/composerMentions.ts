@@ -104,7 +104,7 @@ export function filterPromptSkillReferences(
   return skills.filter((skill) => promptIncludesSkillMention(prompt, skill.name, provider));
 }
 
-function normalizeSkillName(name: string): string {
+function normalizeMentionNameKey(name: string): string {
   return name.trim().toLowerCase();
 }
 
@@ -116,7 +116,7 @@ export function collectPromptSkillMentionNames(prompt: string, provider: Provide
   const names: string[] = [];
   const seen = new Set<string>();
   for (const match of prompt.matchAll(pattern)) {
-    const name = normalizeSkillName(match[2] ?? match[3] ?? "");
+    const name = normalizeMentionNameKey(match[2] ?? match[3] ?? "");
     if (!name || seen.has(name)) continue;
     seen.add(name);
     names.push(name);
@@ -147,7 +147,7 @@ export function resolvePromptSkillReferences(input: {
   const catalogByName = new Map<string, ProviderSkillDescriptor>();
   for (const skill of input.catalogSkills) {
     if (!skill.enabled) continue;
-    const key = normalizeSkillName(skill.name);
+    const key = normalizeMentionNameKey(skill.name);
     if (!catalogByName.has(key)) catalogByName.set(key, skill);
   }
 
@@ -173,7 +173,7 @@ export function resolvePromptSkillReferences(input: {
 
   const unavailableSkillNames: string[] = [];
   for (const selected of input.selectedSkills) {
-    const name = normalizeSkillName(selected.name);
+    const name = normalizeMentionNameKey(selected.name);
     if (!promptNameSet.has(name)) continue;
     if (!addResolved(name, selected) && name === CANVAS_SKILL_NAME) {
       unavailableSkillNames.push(CANVAS_SKILL_NAME);
@@ -202,10 +202,6 @@ export function providerSkillReferencesEqual(
       (skill, index) => skill.name === right[index]?.name && skill.path === right[index]?.path,
     )
   );
-}
-
-function normalizeMentionNameKey(name: string): string {
-  return name.trim().toLowerCase();
 }
 
 function collectProviderMentionTokenKeys(mention: ProviderMentionReference): Set<string> {
