@@ -203,6 +203,10 @@
     "./canvasProvider": {
       "types": "./src/canvasProvider.ts",
       "import": "./src/canvasProvider.ts"
+    },
+    "./canvasAgentContract": {
+      "types": "./src/canvasAgentContract.ts",
+      "import": "./src/canvasAgentContract.ts"
     }
   },
   "scripts": {

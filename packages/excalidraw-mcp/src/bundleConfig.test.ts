@@ -3,7 +3,7 @@
 // Layer: Excalidraw MCP build regression test
 
 import { spawnSync } from "node:child_process";
-import { mkdtemp, readdir, rm } from "node:fs/promises";
+import { mkdtemp, readFile, readdir, rm } from "node:fs/promises";
 import { isBuiltin } from "node:module";
 import { tmpdir } from "node:os";
 import path from "node:path";
@@ -12,6 +12,7 @@ import { describe, expect, it } from "vitest";
 import { build } from "tsdown";
 
 import config, { shouldBundleCanvasMcpDependency } from "../tsdown.config";
+import { copySkillAssets } from "../scripts/copySkillAssets";
 
 describe("Canvas MCP bundle config", () => {
   it("bundles runtime packages while leaving Node built-ins external", () => {
@@ -52,9 +53,17 @@ describe("Canvas MCP bundle config", () => {
         clean: true,
         logLevel: "silent",
       });
+      await copySkillAssets({ packageRoot, outDir });
 
       const publicEntries = ["main.mjs", "server.mjs", "bridge.mjs"];
       expect(await readdir(outDir)).toEqual(expect.arrayContaining(publicEntries));
+      const sourceSkill = await readFile(
+        path.join(packageRoot, "skills/canvas/SKILL.md"),
+        "utf8",
+      );
+      expect(await readFile(path.join(outDir, "skills/canvas/SKILL.md"), "utf8")).toBe(
+        sourceSkill,
+      );
 
       for (const entry of publicEntries) {
         const launch = spawnSync("node", [path.join(outDir, entry)], {
