@@ -9,6 +9,7 @@ product_contract_source: ce-brainstorm
 execution: code
 depth: deep
 deepened: 2026-07-14
+superseded_by: docs/plans/2026-07-15-001-refactor-session-canvas-artifact-plan.md
 ---
 
 # AI Canvas Workspace - Plan
