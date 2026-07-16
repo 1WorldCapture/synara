@@ -40,6 +40,7 @@ import {
   Semaphore,
   Stream,
 } from "effect";
+import { CANVAS_SKILL_NAME } from "@synara/shared/canvasAgentContract";
 import {
   buildPromptThreadTitleFallback,
   isGenericChatThreadTitle,
@@ -73,6 +74,7 @@ import {
   ProviderAdapterValidationError,
   ProviderServiceError,
 } from "../../provider/Errors.ts";
+import { materializeBuiltinCanvasSkill } from "../../provider/builtinCanvasSkill.ts";
 import { buildInlineSkillInstructions } from "../../provider/skillPromptInjection.ts";
 import {
   TextGeneration,
@@ -190,6 +192,57 @@ export function normalizeSkillMentionTextForProvider(input: {
     );
   }
   return nextText;
+}
+
+function normalizedSkillName(name: string): string {
+  return name.trim().toLowerCase();
+}
+
+export async function canonicalizeCanvasSkillReferences(input: {
+  readonly provider: ProviderKind;
+  readonly skills: ReadonlyArray<ProviderSkillReference>;
+  readonly disabledSkillNames: ReadonlyArray<string>;
+  readonly baseDir: string;
+  readonly materialize?: () => Promise<string | null>;
+}): Promise<{
+  readonly skills: ProviderSkillReference[];
+  readonly managedCanvasPath?: string;
+}> {
+  const hasCanvas = input.skills.some(
+    (skill) => normalizedSkillName(skill.name) === CANVAS_SKILL_NAME,
+  );
+  if (!hasCanvas || !isCanvasProviderSupported(input.provider)) {
+    return { skills: [...input.skills] };
+  }
+  if (
+    input.disabledSkillNames.some(
+      (name) => normalizedSkillName(name) === CANVAS_SKILL_NAME,
+    )
+  ) {
+    throw new Error("The built-in Canvas Skill is disabled in Settings.");
+  }
+
+  const managedCanvasPath = await (input.materialize
+    ? input.materialize()
+    : materializeBuiltinCanvasSkill({ baseDir: input.baseDir }));
+  if (!managedCanvasPath) {
+    throw new Error(
+      "The built-in Canvas Skill is unavailable because its managed file could not be prepared.",
+    );
+  }
+
+  let emittedCanvas = false;
+  const skills: ProviderSkillReference[] = [];
+  for (const skill of input.skills) {
+    if (normalizedSkillName(skill.name) !== CANVAS_SKILL_NAME) {
+      skills.push(skill);
+      continue;
+    }
+    if (emittedCanvas) continue;
+    emittedCanvas = true;
+    skills.push({ name: CANVAS_SKILL_NAME, path: managedCanvasPath });
+  }
+  return { skills, managedCanvasPath };
 }
 
 function attachmentTitleSeed(attachment: ChatAttachment | undefined): string {
@@ -1127,6 +1180,42 @@ const make = Effect.gen(function* () {
       threadSessionModelSelections.get(input.threadId)?.provider ??
       thread.session?.providerName ??
       thread.modelSelection.provider;
+    const hasSupportedCanvasSelection =
+      input.skills?.some(
+        (skill) => normalizedSkillName(skill.name) === CANVAS_SKILL_NAME,
+      ) === true && isCanvasProviderSupported(selectedProvider as ProviderKind);
+    const canonicalSkillResolution = hasSupportedCanvasSelection
+      ? yield* serverSettings.getSettings.pipe(
+          Effect.flatMap((settings) =>
+            Effect.tryPromise(() =>
+              canonicalizeCanvasSkillReferences({
+                provider: selectedProvider as ProviderKind,
+                skills: input.skills ?? [],
+                disabledSkillNames: settings.skills.disabled,
+                baseDir: serverConfig.baseDir,
+              }),
+            ),
+          ),
+          Effect.mapError(
+            (error) =>
+              new ProviderAdapterRequestError({
+                provider: selectedProvider as ProviderKind,
+                method: "thread.turn.start",
+                detail:
+                  error instanceof Error
+                    ? error.message
+                    : "The selected Canvas Skill could not be prepared.",
+                cause: error,
+              }),
+          ),
+        )
+      : {
+          skills: [...(input.skills ?? [])],
+          managedCanvasPath: undefined as string | undefined,
+        };
+    const canonicalSkills =
+      input.skills !== undefined ? canonicalSkillResolution.skills : undefined;
+    const managedCanvasPath = canonicalSkillResolution.managedCanvasPath;
     const hasPendingPriorTranscriptBootstrap =
       freshSessionContextBootstrapThreadIds.has(input.threadId) ||
       rollbackContextBootstrapThreadIds.has(input.threadId);
@@ -1220,22 +1309,34 @@ const make = Effect.gen(function* () {
     // Portable skills fallback: providers that cannot load the referenced skill
     // file natively get the skill instructions inlined into the prompt.
     const skillInlineText =
-      input.skills !== undefined && input.skills.length > 0
+      canonicalSkills !== undefined && canonicalSkills.length > 0
         ? yield* Effect.tryPromise(() =>
             buildInlineSkillInstructions({
               provider: selectedProvider as ProviderKind,
-              skills: input.skills ?? [],
+              skills: canonicalSkills,
+              ...(managedCanvasPath
+                ? {
+                    managedSkillPaths: [managedCanvasPath],
+                    requiredSkillPaths: [managedCanvasPath],
+                  }
+                : {}),
               maxChars: Math.max(
                 0,
                 PROVIDER_SEND_TURN_MAX_INPUT_CHARS - providerInput.length - 1_000,
               ),
             }),
           ).pipe(
-            Effect.catch((error) =>
-              Effect.logWarning("failed to inline portable skill instructions", {
-                threadId: input.threadId,
-                error,
-              }).pipe(Effect.as("")),
+            Effect.mapError(
+              (error) =>
+                new ProviderAdapterRequestError({
+                  provider: selectedProvider as ProviderKind,
+                  method: "thread.turn.start",
+                  detail:
+                    error instanceof Error
+                      ? error.message
+                      : "The selected Skill instructions could not be prepared.",
+                  cause: error,
+                }),
             ),
           )
         : "";
@@ -1246,7 +1347,7 @@ const make = Effect.gen(function* () {
       normalizeSkillMentionTextForProvider({
         provider: selectedProvider as ProviderKind,
         messageText: providerInputWithSkills,
-        ...(input.skills !== undefined ? { skills: input.skills } : {}),
+        ...(canonicalSkills !== undefined ? { skills: canonicalSkills } : {}),
       }),
     );
     const normalizedAttachments = yield* resolveProviderDispatchAttachments({
@@ -1280,7 +1381,7 @@ const make = Effect.gen(function* () {
     const providerTurnInput = {
       threadId: input.threadId,
       ...(normalizedAttachments.length > 0 ? { attachments: normalizedAttachments } : {}),
-      ...(input.skills !== undefined ? { skills: input.skills } : {}),
+      ...(canonicalSkills !== undefined ? { skills: canonicalSkills } : {}),
       ...(input.mentions !== undefined ? { mentions: input.mentions } : {}),
       ...(modelForTurn !== undefined ? { modelSelection: modelForTurn } : {}),
       ...(input.interactionMode !== undefined ? { interactionMode: input.interactionMode } : {}),
@@ -1350,10 +1451,10 @@ const make = Effect.gen(function* () {
           target: input.reviewTarget,
         })
         .pipe(Effect.onError(() => cancelPendingStudioBaseline));
-    } else if (input.dispatchMode === "steer") {
-      yield* providerService.steerTurn({
-        ...providerTurnInput,
-        ...(normalizedInput ? { input: normalizedInput } : {}),
+      } else if (input.dispatchMode === "steer") {
+        yield* providerService.steerTurn({
+          ...providerTurnInput,
+          ...(normalizedInput ? { input: normalizedInput } : {}),
       });
     } else {
       yield* capturePreTurnBaselines;
@@ -1414,7 +1515,7 @@ const make = Effect.gen(function* () {
               normalizeSkillMentionTextForProvider({
                 provider: selectedProvider as ProviderKind,
                 messageText: retryProviderInputWithSkills,
-                ...(input.skills !== undefined ? { skills: input.skills } : {}),
+                ...(canonicalSkills !== undefined ? { skills: canonicalSkills } : {}),
               }),
             );
 

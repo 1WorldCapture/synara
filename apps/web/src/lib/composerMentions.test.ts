@@ -10,6 +10,7 @@ import {
   filterPromptProviderMentionReferences,
   filterPromptSkillReferences,
   formatComposerMentionToken,
+  resolvePromptSkillReferences,
   resolveMentionChipKind,
 } from "./composerMentions";
 
@@ -89,6 +90,110 @@ describe("composer mention reference filtering", () => {
 
     expect(filterPromptSkillReferences("Use /planner", [skill], "pi")).toEqual([]);
     expect(filterPromptSkillReferences("Use /skill:planner", [skill], "pi")).toEqual([skill]);
+  });
+
+  it("resolves manually typed skills from the active provider catalog", () => {
+    const canvas = {
+      name: "canvas",
+      path: "/managed/builtin-skills/canvas/SKILL.md",
+      enabled: true,
+      scope: "synara-builtin",
+    };
+
+    expect(
+      resolvePromptSkillReferences({
+        prompt: "/canvas draw a diagram",
+        provider: "codex",
+        selectedSkills: [],
+        catalogSkills: [canvas],
+      }),
+    ).toEqual({
+      skills: [{ name: "canvas", path: canvas.path }],
+      unavailableSkillNames: [],
+    });
+  });
+
+  it("rebinds picker and restored Canvas references while preserving other skill order", () => {
+    const managedCanvas = {
+      name: "canvas",
+      path: "/new-home/builtin-skills/canvas/SKILL.md",
+      enabled: true,
+      scope: "synara-builtin",
+    };
+    const reviewer = {
+      name: "reviewer",
+      path: "/current-provider/reviewer/SKILL.md",
+      enabled: true,
+      scope: "codex",
+    };
+
+    expect(
+      resolvePromptSkillReferences({
+        prompt: "/reviewer then /canvas",
+        provider: "codex",
+        selectedSkills: [
+          { name: "reviewer", path: "/old-provider/reviewer/SKILL.md" },
+          { name: "canvas", path: "/old-home/builtin-skills/canvas/SKILL.md" },
+        ],
+        catalogSkills: [managedCanvas, reviewer],
+      }),
+    ).toEqual({
+      skills: [
+        { name: "reviewer", path: reviewer.path },
+        { name: "canvas", path: managedCanvas.path },
+      ],
+      unavailableSkillNames: [],
+    });
+  });
+
+  it("keeps an unsupported provider's ordinary user Canvas skill usable", () => {
+    const userCanvas = {
+      name: "canvas",
+      path: "/home/user/.opencode/skills/canvas/SKILL.md",
+      enabled: true,
+      scope: "opencode",
+    };
+
+    expect(
+      resolvePromptSkillReferences({
+        prompt: "/canvas draw",
+        provider: "opencode",
+        selectedSkills: [],
+        catalogSkills: [userCanvas],
+      }),
+    ).toEqual({
+      skills: [{ name: "canvas", path: userCanvas.path }],
+      unavailableSkillNames: [],
+    });
+  });
+
+  it("reports exact Canvas intent unavailable instead of sending it as plain text", () => {
+    expect(
+      resolvePromptSkillReferences({
+        prompt: "please use /canvas",
+        provider: "cursor",
+        selectedSkills: [{ name: "canvas", path: "/stale/canvas/SKILL.md" }],
+        catalogSkills: [],
+      }),
+    ).toEqual({ skills: [], unavailableSkillNames: ["canvas"] });
+
+    expect(
+      resolvePromptSkillReferences({
+        prompt: "mention /canvas-like but not the exact token",
+        provider: "cursor",
+        selectedSkills: [],
+        catalogSkills: [],
+      }),
+    ).toEqual({ skills: [], unavailableSkillNames: [] });
+
+    expect(
+      resolvePromptSkillReferences({
+        prompt: "/canvas draw",
+        provider: "pi",
+        selectedSkills: [],
+        catalogSkills: [],
+      }),
+    ).toEqual({ skills: [], unavailableSkillNames: ["canvas"] });
   });
 });
 

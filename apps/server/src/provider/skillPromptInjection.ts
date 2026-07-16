@@ -30,7 +30,27 @@ function pathSegments(path: string): Set<string> {
   return new Set(nodePath.normalize(path).split(/[\\/]+/));
 }
 
-export function shouldInlineSkillForProvider(provider: ProviderKind, skillPath: string): boolean {
+function normalizedPathKey(filePath: string): string {
+  return nodePath.resolve(filePath);
+}
+
+function isManagedSkillPath(
+  skillPath: string,
+  managedSkillPaths: ReadonlyArray<string> | undefined,
+): boolean {
+  if (!managedSkillPaths || managedSkillPaths.length === 0) return false;
+  const key = normalizedPathKey(skillPath);
+  return managedSkillPaths.some((managedPath) => normalizedPathKey(managedPath) === key);
+}
+
+export function shouldInlineSkillForProvider(
+  provider: ProviderKind,
+  skillPath: string,
+  options?: { readonly managedSkillPaths?: ReadonlyArray<string> },
+): boolean {
+  if (isManagedSkillPath(skillPath, options?.managedSkillPaths)) {
+    return provider !== "codex";
+  }
   const segments = pathSegments(skillPath);
   switch (provider) {
     case "antigravity":
@@ -62,11 +82,37 @@ export async function buildInlineSkillInstructions(input: {
   readonly provider: ProviderKind;
   readonly skills: ReadonlyArray<ProviderSkillReference>;
   readonly maxChars: number;
+  readonly managedSkillPaths?: ReadonlyArray<string>;
+  readonly requiredSkillPaths?: ReadonlyArray<string>;
 }): Promise<string> {
-  const inlineSkills = input.skills.filter((skill) =>
-    shouldInlineSkillForProvider(input.provider, skill.path),
+  const seen = new Set<string>();
+  const inlineSkills = input.skills.filter((skill) => {
+    if (
+      !shouldInlineSkillForProvider(input.provider, skill.path, {
+        managedSkillPaths: input.managedSkillPaths,
+      })
+    ) {
+      return false;
+    }
+    const key = `${skill.name.trim().toLowerCase()}\u0000${normalizedPathKey(skill.path)}`;
+    if (seen.has(key)) return false;
+    seen.add(key);
+    return true;
+  });
+  if (inlineSkills.length === 0) {
+    return "";
+  }
+
+  const requiredPaths = new Set(
+    (input.requiredSkillPaths ?? []).map((filePath) => normalizedPathKey(filePath)),
   );
-  if (inlineSkills.length === 0 || input.maxChars <= 0) {
+  const requiredInlineSkill = inlineSkills.find((skill) =>
+    requiredPaths.has(normalizedPathKey(skill.path)),
+  );
+  if (input.maxChars <= 0) {
+    if (requiredInlineSkill) {
+      throw new Error(`Canvas Skill instructions cannot fit in this provider turn.`);
+    }
     return "";
   }
 
@@ -75,7 +121,12 @@ export async function buildInlineSkillInstructions(input: {
     let content: string;
     try {
       content = await fs.readFile(skill.path, "utf8");
-    } catch {
+    } catch (error) {
+      if (requiredPaths.has(normalizedPathKey(skill.path))) {
+        throw new Error(`Canvas Skill instructions are unavailable at ${skill.path}.`, {
+          cause: error,
+        });
+      }
       continue;
     }
     let trimmed = content.trim();
@@ -88,6 +139,9 @@ export async function buildInlineSkillInstructions(input: {
     const candidate =
       text.length === 0 ? `${INLINE_SKILLS_HEADER}\n\n${block}` : `${text}\n\n${block}`;
     if (candidate.length > input.maxChars) {
+      if (requiredPaths.has(normalizedPathKey(skill.path))) {
+        throw new Error(`Canvas Skill instructions cannot fit in this provider turn.`);
+      }
       // Keep whatever already fits instead of overflowing the provider turn budget.
       break;
     }

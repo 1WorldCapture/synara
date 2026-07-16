@@ -96,11 +96,13 @@ import { useRefreshProviderStatusesNow } from "~/hooks/useProviderStatusRefresh"
 import { SINGLE_CHAT_PANE_SCOPE_ID } from "~/lib/chatPaneScope";
 import {
   composerMentionPathNeedsQuoting,
+  collectPromptSkillMentionNames,
   formatComposerMentionToken,
   filterPromptProviderMentionReferences,
   filterPromptSkillReferences,
   providerMentionReferencesEqual,
   providerSkillReferencesEqual,
+  resolvePromptSkillReferences,
   skillMentionPrefix,
 } from "~/lib/composerMentions";
 import { getLocalFolderBrowseRootPath, isLocalFolderMentionQuery } from "~/lib/localFolderMentions";
@@ -5457,7 +5459,8 @@ export default function ChatView({
     });
   }, [prompt, updateSelectedComposerMentions]);
 
-  // Provider references are provider-specific; keep draft restores from looking like manual switches.
+  // File/plugin mentions are provider-specific. Skill intent stays visible and
+  // is rebound from the active provider catalog at the send boundary.
   useEffect(() => {
     const previous = previousSelectedProviderRef.current;
     previousSelectedProviderRef.current = {
@@ -5467,9 +5470,8 @@ export default function ChatView({
     if (!previous || previous.threadId !== threadId || previous.provider === selectedProvider) {
       return;
     }
-    updateSelectedComposerSkills([]);
     updateSelectedComposerMentions([]);
-  }, [selectedProvider, threadId, updateSelectedComposerMentions, updateSelectedComposerSkills]);
+  }, [selectedProvider, threadId, updateSelectedComposerMentions]);
 
   useLayoutEffect(() => {
     // ChatView stays mounted across thread switches, so clear thread-local overlays before paint.
@@ -7123,7 +7125,7 @@ export default function ChatView({
     const composerTerminalContextsForSend =
       queuedChatTurn?.terminalContexts ?? composerTerminalContexts;
     const composerPastedTextsForSend = queuedChatTurn?.pastedTexts ?? composerPastedTexts;
-    const selectedComposerSkillsForSend =
+    let selectedComposerSkillsForSend =
       queuedChatTurn?.skills ?? selectedComposerSkillsRef.current;
     const selectedComposerMentionsForSend =
       queuedChatTurn?.mentions ?? selectedComposerMentionsRef.current;
@@ -7233,6 +7235,61 @@ export default function ChatView({
         setPendingAutomationConversation(null);
         return true;
       }
+    }
+    const promptSkillNames = collectPromptSkillMentionNames(
+      promptForSend,
+      selectedProviderForSend,
+    );
+    if (promptSkillNames.length === 0) {
+      selectedComposerSkillsForSend = [];
+    } else {
+      if (!composerSkillCwd) {
+        toastManager.add({
+          type: "error",
+          title: "Skills are unavailable in this workspace",
+          description: "Your draft was kept. Open a workspace and try again.",
+        });
+        return false;
+      }
+      let catalogSkills: ProviderSkillDescriptor[];
+      try {
+        const result = await api.provider.listSkills({
+          provider: selectedProviderForSend,
+          cwd: composerSkillCwd,
+          threadId: activeThread.id,
+          ...(selectedProviderForSend === "pi" && settings.piAgentDir
+            ? { agentDir: settings.piAgentDir }
+            : {}),
+          forceReload: true,
+        });
+        catalogSkills = result.skills;
+      } catch (error) {
+        toastManager.add({
+          type: "error",
+          title: "Couldn’t resolve the selected Skills",
+          description:
+            error instanceof Error
+              ? `${error.message} Your draft was kept.`
+              : "Skill discovery failed. Your draft was kept.",
+        });
+        return false;
+      }
+      const skillResolution = resolvePromptSkillReferences({
+        prompt: promptForSend,
+        provider: selectedProviderForSend,
+        selectedSkills: selectedComposerSkillsForSend,
+        catalogSkills,
+      });
+      if (skillResolution.unavailableSkillNames.includes("canvas")) {
+        toastManager.add({
+          type: "error",
+          title: "Canvas Skill is unavailable",
+          description:
+            "This Provider does not expose an enabled, readable Canvas Skill. Your draft was kept.",
+        });
+        return false;
+      }
+      selectedComposerSkillsForSend = skillResolution.skills;
     }
     const sourceProposedPlanForSend =
       queuedChatTurn?.sourceProposedPlan ??

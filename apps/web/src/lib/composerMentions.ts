@@ -3,7 +3,17 @@
 // Layer: Web composer helper
 // Exports: mention token formatters plus regex helpers used by composer parsing and prompt sync.
 
-import type { ProviderMentionReference, ProviderSkillReference } from "@synara/contracts";
+import type {
+  ProviderKind,
+  ProviderMentionReference,
+  ProviderSkillDescriptor,
+  ProviderSkillReference,
+} from "@synara/contracts";
+import {
+  CANVAS_SKILL_NAME,
+  SYNARA_BUILTIN_SKILL_SCOPE,
+} from "@synara/shared/canvasAgentContract";
+import { isCanvasProviderSupported } from "@synara/shared/canvasProvider";
 
 export function skillMentionPrefix(provider: string): string {
   return provider === "pi" ? "/skill:" : "/";
@@ -92,6 +102,94 @@ export function filterPromptSkillReferences(
   provider: string,
 ): ProviderSkillReference[] {
   return skills.filter((skill) => promptIncludesSkillMention(prompt, skill.name, provider));
+}
+
+function normalizeSkillName(name: string): string {
+  return name.trim().toLowerCase();
+}
+
+export function collectPromptSkillMentionNames(prompt: string, provider: ProviderKind): string[] {
+  const pattern =
+    provider === "pi"
+      ? /(^|\s)(?:\/skill:([a-z0-9][a-z0-9._-]*)|\/(canvas))(?=\s|$)/gi
+      : /(^|\s)[/$]([a-z0-9][a-z0-9._-]*)(?=\s|$)/gi;
+  const names: string[] = [];
+  const seen = new Set<string>();
+  for (const match of prompt.matchAll(pattern)) {
+    const name = normalizeSkillName(match[2] ?? match[3] ?? "");
+    if (!name || seen.has(name)) continue;
+    seen.add(name);
+    names.push(name);
+  }
+  return names;
+}
+
+export interface PromptSkillReferenceResolution {
+  readonly skills: ProviderSkillReference[];
+  readonly unavailableSkillNames: string[];
+}
+
+/**
+ * Rebuilds per-turn Skill references from the visible prompt and the active
+ * provider catalog. Existing picker order wins; manually typed tokens missing
+ * from that selection are appended in prompt order. Canvas is fail-closed when
+ * it denotes Synara's built-in capability, while unsupported providers may
+ * still expose an ordinary user-owned skill named canvas.
+ */
+export function resolvePromptSkillReferences(input: {
+  readonly prompt: string;
+  readonly provider: ProviderKind;
+  readonly selectedSkills: ReadonlyArray<ProviderSkillReference>;
+  readonly catalogSkills: ReadonlyArray<ProviderSkillDescriptor>;
+}): PromptSkillReferenceResolution {
+  const promptNames = collectPromptSkillMentionNames(input.prompt, input.provider);
+  const promptNameSet = new Set(promptNames);
+  const catalogByName = new Map<string, ProviderSkillDescriptor>();
+  for (const skill of input.catalogSkills) {
+    if (!skill.enabled) continue;
+    const key = normalizeSkillName(skill.name);
+    if (!catalogByName.has(key)) catalogByName.set(key, skill);
+  }
+
+  const skills: ProviderSkillReference[] = [];
+  const includedNames = new Set<string>();
+  const addResolved = (name: string, existing?: ProviderSkillReference): boolean => {
+    if (includedNames.has(name)) return true;
+    const catalogSkill = catalogByName.get(name);
+    const isCanvas = name === CANVAS_SKILL_NAME;
+    if (
+      isCanvas &&
+      isCanvasProviderSupported(input.provider) &&
+      catalogSkill?.scope !== SYNARA_BUILTIN_SKILL_SCOPE
+    ) {
+      return false;
+    }
+    const resolved = catalogSkill ?? (isCanvas ? undefined : existing);
+    if (!resolved) return false;
+    skills.push({ name: resolved.name, path: resolved.path });
+    includedNames.add(name);
+    return true;
+  };
+
+  const unavailableSkillNames: string[] = [];
+  for (const selected of input.selectedSkills) {
+    const name = normalizeSkillName(selected.name);
+    if (!promptNameSet.has(name)) continue;
+    if (!addResolved(name, selected) && name === CANVAS_SKILL_NAME) {
+      unavailableSkillNames.push(CANVAS_SKILL_NAME);
+    }
+  }
+  for (const name of promptNames) {
+    if (includedNames.has(name)) continue;
+    if (!addResolved(name) && name === CANVAS_SKILL_NAME) {
+      unavailableSkillNames.push(CANVAS_SKILL_NAME);
+    }
+  }
+
+  return {
+    skills,
+    unavailableSkillNames: [...new Set(unavailableSkillNames)],
+  };
 }
 
 export function providerSkillReferencesEqual(

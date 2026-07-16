@@ -55,6 +55,16 @@ describe("shouldInlineSkillForProvider", () => {
       expect(shouldInlineSkillForProvider(provider, claudeSkillPath)).toBe(true);
     }
   });
+
+  it("treats an explicitly managed Canvas path as native only for Codex", () => {
+    const customBaseManagedPath = "/Volumes/custom-state/builtin-skills/canvas/SKILL.md";
+    const options = { managedSkillPaths: [customBaseManagedPath] };
+
+    expect(shouldInlineSkillForProvider("codex", customBaseManagedPath, options)).toBe(false);
+    for (const provider of ["claudeAgent", "cursor", "gemini", "grok", "droid"] as const) {
+      expect(shouldInlineSkillForProvider(provider, customBaseManagedPath, options)).toBe(true);
+    }
+  });
 });
 
 describe("buildInlineSkillInstructions", () => {
@@ -110,5 +120,43 @@ describe("buildInlineSkillInstructions", () => {
       maxChars: 10_000,
     });
     expect(text).toBe("");
+  });
+
+  it("inlines a custom-base managed Canvas skill exactly once for fallback providers", async () => {
+    const root = mkdtempSync(path.join(os.tmpdir(), "managed-canvas-inline-"));
+    const skillPath = path.join(root, "builtin-skills", "canvas", "SKILL.md");
+    try {
+      await mkdir(path.dirname(skillPath), { recursive: true });
+      await writeFile(skillPath, "---\nname: canvas\n---\n\nUse the Canvas MCP.");
+
+      const text = await buildInlineSkillInstructions({
+        provider: "cursor",
+        skills: [
+          { name: "canvas", path: skillPath },
+          { name: "canvas", path: skillPath },
+        ],
+        managedSkillPaths: [skillPath],
+        requiredSkillPaths: [skillPath],
+        maxChars: 10_000,
+      });
+
+      expect(text.match(/<skill name="canvas"/g)).toHaveLength(1);
+      expect(text).toContain("Use the Canvas MCP.");
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  it("fails explicitly when a required managed skill cannot be read", async () => {
+    const missing = "/missing/builtin-skills/canvas/SKILL.md";
+    await expect(
+      buildInlineSkillInstructions({
+        provider: "gemini",
+        skills: [{ name: "canvas", path: missing }],
+        managedSkillPaths: [missing],
+        requiredSkillPaths: [missing],
+        maxChars: 10_000,
+      }),
+    ).rejects.toThrow("Canvas");
   });
 });

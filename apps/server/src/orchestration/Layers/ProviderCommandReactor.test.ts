@@ -35,6 +35,7 @@ import {
   ProviderAdapterRequestError,
   ProviderAdapterValidationError,
 } from "../../provider/Errors.ts";
+import { builtinCanvasSkillPath } from "../../provider/builtinCanvasSkill.ts";
 import { OrchestrationEventStoreLive } from "../../persistence/Layers/OrchestrationEventStore.ts";
 import { OrchestrationCommandReceiptRepositoryLive } from "../../persistence/Layers/OrchestrationCommandReceipts.ts";
 import { OrchestrationEventDeliveryRepositoryLive } from "../../persistence/Layers/OrchestrationEventDeliveries.ts";
@@ -1301,6 +1302,149 @@ describe("ProviderCommandReactor", () => {
     expect(fs.existsSync(path.join(harness.stateDir, "drawings", "thread-1.excalidraw"))).toBe(
       false,
     );
+  });
+
+  it("canonicalizes Canvas for Codex and does not carry it into an untagged follow-up", async () => {
+    const baseDir = fs.mkdtempSync(path.join(os.tmpdir(), "synara-reactor-canvas-codex-"));
+    const harness = await createHarness({ baseDir });
+    const now = new Date().toISOString();
+
+    await Effect.runPromise(
+      harness.engine.dispatch({
+        type: "thread.turn.start",
+        commandId: CommandId.makeUnsafe("cmd-canvas-codex-turn"),
+        threadId: ThreadId.makeUnsafe("thread-1"),
+        message: {
+          messageId: asMessageId("canvas-codex-message"),
+          role: "user",
+          text: "/canvas draw",
+          skills: [
+            { name: "reviewer", path: "/skills/reviewer/SKILL.md" },
+            { name: "Canvas", path: "/stale/canvas/SKILL.md" },
+            { name: "canvas", path: "/native/canvas/SKILL.md" },
+          ],
+        },
+        runtimeMode: "approval-required",
+        interactionMode: DEFAULT_PROVIDER_INTERACTION_MODE,
+        createdAt: now,
+      }),
+    );
+
+    await waitFor(() => harness.sendTurn.mock.calls.length === 1);
+    expect(harness.sendTurn.mock.calls[0]?.[0]).toMatchObject({
+      input: "$canvas draw",
+      skills: [
+        { name: "reviewer", path: "/skills/reviewer/SKILL.md" },
+        { name: "canvas", path: builtinCanvasSkillPath(baseDir) },
+      ],
+    });
+
+    harness.sendTurn.mockClear();
+    await Effect.runPromise(
+      harness.engine.dispatch({
+        type: "thread.turn.start",
+        commandId: CommandId.makeUnsafe("cmd-untagged-follow-up"),
+        threadId: ThreadId.makeUnsafe("thread-1"),
+        message: {
+          messageId: asMessageId("untagged-follow-up-message"),
+          role: "user",
+          text: "make the title shorter",
+        },
+        runtimeMode: "approval-required",
+        interactionMode: DEFAULT_PROVIDER_INTERACTION_MODE,
+        createdAt: now,
+      }),
+    );
+    await waitFor(() => harness.sendTurn.mock.calls.length === 1);
+    expect(harness.sendTurn.mock.calls[0]?.[0]).not.toHaveProperty("skills");
+    expect(harness.sendTurn.mock.calls[0]?.[0]).toMatchObject({
+      input: "make the title shorter",
+    });
+  });
+
+  it("inlines the canonical managed Canvas Skill once for a fallback provider", async () => {
+    const baseDir = fs.mkdtempSync(path.join(os.tmpdir(), "synara-reactor-canvas-cursor-"));
+    const harness = await createHarness({
+      baseDir,
+      threadModelSelection: { provider: "cursor", model: "cursor-auto" },
+    });
+    const now = new Date().toISOString();
+
+    await Effect.runPromise(
+      harness.engine.dispatch({
+        type: "thread.turn.start",
+        commandId: CommandId.makeUnsafe("cmd-canvas-cursor-turn"),
+        threadId: ThreadId.makeUnsafe("thread-1"),
+        message: {
+          messageId: asMessageId("canvas-cursor-message"),
+          role: "user",
+          text: "/canvas draw",
+          skills: [{ name: "canvas", path: "/stale/canvas/SKILL.md" }],
+        },
+        runtimeMode: "approval-required",
+        interactionMode: DEFAULT_PROVIDER_INTERACTION_MODE,
+        createdAt: now,
+      }),
+    );
+
+    await waitFor(() => harness.sendTurn.mock.calls.length === 1);
+    const call = harness.sendTurn.mock.calls[0]?.[0];
+    expect(call).toMatchObject({
+      skills: [{ name: "canvas", path: builtinCanvasSkillPath(baseDir) }],
+    });
+    expect(call?.input?.match(/<skill name="canvas"/g)).toHaveLength(1);
+    expect(call?.input).toContain("/canvas draw");
+    expect(call?.input).toContain("Create a clear, editable drawing");
+  });
+
+  it("fails a selected Canvas turn when the managed file cannot be materialized", async () => {
+    const baseDir = fs.mkdtempSync(path.join(os.tmpdir(), "synara-reactor-canvas-missing-"));
+    fs.writeFileSync(path.join(baseDir, "builtin-skills"), "blocks managed directory creation");
+    const harness = await createHarness({ baseDir });
+    const now = new Date().toISOString();
+
+    await Effect.runPromise(
+      harness.engine.dispatch({
+        type: "thread.turn.start",
+        commandId: CommandId.makeUnsafe("cmd-no-canvas-with-unavailable-managed-file"),
+        threadId: ThreadId.makeUnsafe("thread-1"),
+        message: {
+          messageId: asMessageId("no-canvas-with-unavailable-managed-file"),
+          role: "user",
+          text: "continue without a selected skill",
+        },
+        runtimeMode: "approval-required",
+        interactionMode: DEFAULT_PROVIDER_INTERACTION_MODE,
+        createdAt: now,
+      }),
+    );
+    await waitFor(() => harness.sendTurn.mock.calls.length === 1);
+    harness.sendTurn.mockClear();
+
+    await Effect.runPromise(
+      harness.engine.dispatch({
+        type: "thread.turn.start",
+        commandId: CommandId.makeUnsafe("cmd-canvas-unavailable-turn"),
+        threadId: ThreadId.makeUnsafe("thread-1"),
+        message: {
+          messageId: asMessageId("canvas-unavailable-message"),
+          role: "user",
+          text: "/canvas draw",
+          skills: [{ name: "canvas", path: "/stale/canvas/SKILL.md" }],
+        },
+        runtimeMode: "approval-required",
+        interactionMode: DEFAULT_PROVIDER_INTERACTION_MODE,
+        createdAt: now,
+      }),
+    );
+
+    await waitFor(async () => {
+      const readModel = await Effect.runPromise(harness.engine.getReadModel());
+      return readModel.threads[0]?.session?.status === "error";
+    });
+    expect(harness.sendTurn).not.toHaveBeenCalled();
+    const readModel = await Effect.runPromise(harness.engine.getReadModel());
+    expect(readModel.threads[0]?.session?.lastError).toContain("Canvas Skill is unavailable");
   });
 
   it.each([
