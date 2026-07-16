@@ -14,7 +14,23 @@ export function registerCanvasSaveBarrier(
 ): () => void {
   barriers.set(threadId, barrier);
   return () => {
-    if (barriers.get(threadId) === barrier) barriers.delete(threadId);
+    if (barriers.get(threadId) !== barrier) return;
+
+    // A dock pane can unmount immediately before the user starts a turn. Keep its
+    // final flush visible to dispatch until it settles so the agent cannot read a
+    // stale scene after the UI barrier has disappeared.
+    const pending = Promise.resolve().then(barrier);
+    const detachedBarrier = () => pending;
+    barriers.set(threadId, detachedBarrier);
+    void pending.then(
+      () => {
+        if (barriers.get(threadId) === detachedBarrier) barriers.delete(threadId);
+      },
+      () => {
+        // Preserve the rejected barrier until the pane remounts and replaces it.
+        // Otherwise a failed final save would silently allow a turn on stale data.
+      },
+    );
   };
 }
 
