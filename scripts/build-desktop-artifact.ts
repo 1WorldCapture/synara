@@ -1001,6 +1001,7 @@ const buildDesktopArtifact = Effect.fn("buildDesktopArtifact")(function* (
   );
   const electronBuilderExecutable = path.join(
     repoRoot,
+    "scripts",
     "node_modules",
     ".bin",
     process.platform === "win32" ? "electron-builder.cmd" : "electron-builder",

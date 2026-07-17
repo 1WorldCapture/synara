@@ -71,7 +71,6 @@ import {
   resolveApiModelId,
   trimOrNull,
 } from "@synara/shared/model";
-import { buildClaudeSubagentPrompt } from "@synara/shared/agentMentions";
 import { prepareWindowsSafeProcess } from "@synara/shared/windowsProcess";
 import {
   Cause,
